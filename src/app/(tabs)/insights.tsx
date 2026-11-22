@@ -35,7 +35,6 @@ export default function InsightsScreen() {
     budgets,
     recurring,
     selectedMonth,
-    loadDemoData,
     resetAllData,
   } = useFinances();
 
@@ -114,13 +113,6 @@ export default function InsightsScreen() {
     Alert.alert(t.resetTitle, t.resetBody, [
       { text: t.cancel, style: 'cancel' },
       { text: t.deleteEverything, style: 'destructive', onPress: resetAllData },
-    ]);
-  };
-
-  const handleLoadDemo = () => {
-    Alert.alert(t.loadDemoTitle, t.loadDemoBody, [
-      { text: t.cancel, style: 'cancel' },
-      { text: t.loadDemoConfirm, onPress: loadDemoData },
     ]);
   };
 
@@ -322,16 +314,10 @@ export default function InsightsScreen() {
             </Pressable>
           </View>
 
-          <View style={styles.backupRow}>
-            <Pressable onPress={handleLoadDemo} style={styles.ghostBtn}>
-              <Ionicons name="layers-outline" size={15} color={Colors.textSecondary} />
-              <Text style={styles.ghostBtnText}>{t.loadSampleShort}</Text>
-            </Pressable>
-            <Pressable onPress={handleReset} style={styles.dangerBtn}>
-              <Ionicons name="trash-outline" size={15} color={Colors.danger} />
-              <Text style={styles.dangerBtnText}>{t.resetAll}</Text>
-            </Pressable>
-          </View>
+          <Pressable onPress={handleReset} style={styles.dangerBtn}>
+            <Ionicons name="trash-outline" size={15} color={Colors.danger} />
+            <Text style={styles.dangerBtnText}>{t.resetAll}</Text>
+          </Pressable>
         </View>
       </ScrollView>
     </SafeAreaView>
@@ -556,25 +542,7 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '700',
   },
-  ghostBtn: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 6,
-    backgroundColor: Colors.bg,
-    borderWidth: 1,
-    borderColor: Colors.border,
-    paddingVertical: 10,
-    borderRadius: 12,
-  },
-  ghostBtnText: {
-    color: Colors.textSecondary,
-    fontSize: 12,
-    fontWeight: '600',
-  },
   dangerBtn: {
-    flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
@@ -582,7 +550,7 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.dangerSoft,
     borderWidth: 1,
     borderColor: Colors.danger,
-    paddingVertical: 10,
+    paddingVertical: 11,
     borderRadius: 12,
   },
   dangerBtnText: {

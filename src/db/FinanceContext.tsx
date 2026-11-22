@@ -12,7 +12,6 @@ import {
   insertRecurring,
   logRecurringForCurrentPeriod,
   processDueAutoRecurring,
-  seedSampleData,
   setAppSetting,
   toggleRecurringActive,
   toggleRecurringAutoLog,
@@ -57,7 +56,6 @@ interface FinanceContextValue {
   setRecurringActive: (id: number, active: boolean) => Promise<void>;
   setRecurringAutoLog: (id: number, autoLog: boolean) => Promise<void>;
   removeRecurring: (id: number) => Promise<void>;
-  loadDemoData: () => Promise<void>;
   resetAllData: () => Promise<void>;
 }
 
@@ -208,13 +206,6 @@ export function FinanceProvider({ children }: { children: React.ReactNode }) {
     [refresh]
   );
 
-  const loadDemoData = useCallback(async () => {
-    await clearAllData();
-    await seedSampleData();
-    setSelectedMonth(getCurrentMonthKey());
-    await refresh();
-  }, [refresh]);
-
   const resetAllData = useCallback(async () => {
     for (const exp of expenses) {
       if (exp.receiptUri) deleteReceiptFile(exp.receiptUri);
@@ -254,7 +245,6 @@ export function FinanceProvider({ children }: { children: React.ReactNode }) {
       setRecurringActive,
       setRecurringAutoLog,
       removeRecurring,
-      loadDemoData,
       resetAllData,
     }),
     [
@@ -280,7 +270,6 @@ export function FinanceProvider({ children }: { children: React.ReactNode }) {
       setRecurringActive,
       setRecurringAutoLog,
       removeRecurring,
-      loadDemoData,
       resetAllData,
     ]
   );

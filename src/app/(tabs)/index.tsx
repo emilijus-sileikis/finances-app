@@ -45,12 +45,10 @@ export default function OverviewScreen() {
     logRecurringNow,
     editExpense,
     removeExpense,
-    loadDemoData,
   } = useFinances();
 
   const [selectedExpense, setSelectedExpense] = useState<Expense | null>(null);
   const [expandedCategory, setExpandedCategory] = useState<CategoryId | null>(null);
-  const [loadingDemo, setLoadingDemo] = useState(false);
 
   const panResponder = useMemo(
     () =>
@@ -145,15 +143,6 @@ export default function OverviewScreen() {
     budgetRemaining !== null && budgetRemaining > 0 && daysLeft > 0
       ? budgetRemaining / daysLeft
       : null;
-
-  const handleLoadDemo = async () => {
-    setLoadingDemo(true);
-    try {
-      await loadDemoData();
-    } finally {
-      setLoadingDemo(false);
-    }
-  };
 
   const handleSwitchMonth = (delta: number) => {
     setExpandedCategory(null);
@@ -276,16 +265,6 @@ export default function OverviewScreen() {
               >
                 <Ionicons name="scan-outline" size={18} color={Colors.white} />
                 <Text style={styles.primaryBtnText}>{t.scanOrAddBtn}</Text>
-              </Pressable>
-              <Pressable
-                onPress={handleLoadDemo}
-                disabled={loadingDemo}
-                style={styles.secondaryBtn}
-              >
-                <Ionicons name="layers-outline" size={16} color={Colors.accent} />
-                <Text style={styles.secondaryBtnText}>
-                  {loadingDemo ? t.loading : t.loadSampleBtn}
-                </Text>
               </Pressable>
             </View>
           </View>
@@ -792,22 +771,6 @@ const styles = StyleSheet.create({
   primaryBtnText: {
     color: Colors.white,
     fontSize: 15,
-    fontWeight: '700',
-  },
-  secondaryBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 8,
-    backgroundColor: Colors.accentSoft,
-    borderWidth: 1,
-    borderColor: Colors.accent,
-    paddingVertical: 13,
-    borderRadius: 14,
-  },
-  secondaryBtnText: {
-    color: Colors.accent,
-    fontSize: 14,
     fontWeight: '700',
   },
   card: {

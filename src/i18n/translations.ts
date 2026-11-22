@@ -58,8 +58,6 @@ const EN = {
   emptyDesc:
     'Snap a receipt photo, upload a PDF invoice, or paste a screenshot/tax notice to auto-sort your EUR spending with local savings tips.',
   scanOrAddBtn: 'Scan or Add Receipt',
-  loadSampleBtn: 'Load Sample EUR Data',
-  loading: 'Loading...',
   vsLastMonth: 'vs Last Month',
   budgetLeft: 'Budget Left',
   receiptsCount: 'Receipts',
@@ -250,16 +248,11 @@ const EN = {
     'All receipts and numbers stay 100% on your phone. Export anytime to keep a copy.',
   exportCsv: 'Export CSV',
   backupJson: 'Backup JSON',
-  loadSampleShort: 'Load Sample Data',
   resetAll: 'Reset All',
   resetTitle: 'Reset all local data?',
   resetBody:
     'This deletes all expenses, receipts, budgets, recurring bills, and learned store rules from this device.',
   deleteEverything: 'Delete Everything',
-  loadDemoTitle: 'Load sample EUR data?',
-  loadDemoBody:
-    'Replaces current local data with 3 months of example receipts, budgets, and recurring bills so you can explore the charts.',
-  loadDemoConfirm: 'Load Demo',
 };
 
 export type TranslationSet = typeof EN;
@@ -285,8 +278,6 @@ const LT: TranslationSet = {
   emptyDesc:
     'Nufotografuokite čekį, įkelkite PDF sąskaitą arba įklijuokite ekrano nuotrauką — išlaidos automatiškai susiskirstys į kategorijas su taupymo patarimais.',
   scanOrAddBtn: 'Skenuoti arba pridėti čekį',
-  loadSampleBtn: 'Įkelti pavyzdinius EUR duomenis',
-  loading: 'Kraunama...',
   vsLastMonth: 'Palyg. su praeitu mėn.',
   budgetLeft: 'Biudžeto likutis',
   receiptsCount: 'Čekiai',
@@ -476,16 +467,11 @@ const LT: TranslationSet = {
     'Visi čekiai ir skaičiai saugomi 100% jūsų telefone. Bet kada galite pasidaryti atsarginę kopiją.',
   exportCsv: 'Eksportuoti CSV',
   backupJson: 'Kopija JSON',
-  loadSampleShort: 'Pavyzdiniai duomenys',
   resetAll: 'Išvalyti viską',
   resetTitle: 'Ištrinti visus duomenis?',
   resetBody:
     'Tai visam laikui pašalins visas išlaidas, čekius, biudžetus, pastovias sąskaitas ir išmoktas parduotuvių taisykles.',
   deleteEverything: 'Ištrinti viską',
-  loadDemoTitle: 'Įkelti pavyzdinius EUR duomenis?',
-  loadDemoBody:
-    'Pakeis dabartinius duomenis 3 mėnesių pavyzdiniais čekiais, biudžetais ir pastoviomis sąskaitomis.',
-  loadDemoConfirm: 'Įkelti pavyzdžius',
 };
 
 export const TRANSLATIONS: Record<Language, TranslationSet> = {
