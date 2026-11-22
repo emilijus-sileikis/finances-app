@@ -1,0 +1,297 @@
+import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
+import {
+  clearAllData,
+  deleteExpense,
+  deleteRecurring,
+  fetchAllBudgets,
+  fetchAllExpenses,
+  fetchAllRecurring,
+  fetchMerchantRules,
+  getAppSetting,
+  insertExpense,
+  insertRecurring,
+  logRecurringForCurrentPeriod,
+  processDueAutoRecurring,
+  seedSampleData,
+  setAppSetting,
+  toggleRecurringActive,
+  toggleRecurringAutoLog,
+  updateExpense,
+  upsertBudget,
+} from '@/db/database';
+import { TRANSLATIONS, type Language, type TranslationSet } from '@/i18n/translations';
+import { deleteReceiptFile } from '@/services/receiptStorage';
+import type {
+  CategoryBudget,
+  CategoryId,
+  Expense,
+  MerchantRule,
+  NewExpenseInput,
+  NewRecurringInput,
+  RecurringExpense,
+  UpdateExpenseInput,
+} from '@/types/finance';
+import { getCurrentMonthKey, getCurrentPeriodKey } from '@/utils/format';
+
+interface FinanceContextValue {
+  ready: boolean;
+  language: Language;
+  t: TranslationSet;
+  setLanguage: (lang: Language) => Promise<void>;
+  expenses: Expense[];
+  budgets: CategoryBudget[];
+  recurring: RecurringExpense[];
+  merchantRules: MerchantRule[];
+  selectedMonth: string;
+  setSelectedMonth: (monthKey: string) => void;
+  autoLoggedBannerCount: number;
+  dismissAutoLoggedBanner: () => void;
+  dueManualRecurring: RecurringExpense[];
+  refresh: () => Promise<void>;
+  addExpense: (input: NewExpenseInput) => Promise<number>;
+  editExpense: (id: number, updates: UpdateExpenseInput) => Promise<void>;
+  removeExpense: (expense: Expense) => Promise<void>;
+  saveBudget: (category: CategoryId, monthlyLimit: number) => Promise<void>;
+  addRecurring: (input: NewRecurringInput) => Promise<number>;
+  logRecurringNow: (item: RecurringExpense, overrideAmount?: number) => Promise<void>;
+  setRecurringActive: (id: number, active: boolean) => Promise<void>;
+  setRecurringAutoLog: (id: number, autoLog: boolean) => Promise<void>;
+  removeRecurring: (id: number) => Promise<void>;
+  loadDemoData: () => Promise<void>;
+  resetAllData: () => Promise<void>;
+}
+
+const FinanceContext = createContext<FinanceContextValue | null>(null);
+
+export function FinanceProvider({ children }: { children: React.ReactNode }) {
+  const [ready, setReady] = useState(false);
+  const [language, setLanguageState] = useState<Language>('en');
+  const [expenses, setExpenses] = useState<Expense[]>([]);
+  const [budgets, setBudgets] = useState<CategoryBudget[]>([]);
+  const [recurring, setRecurring] = useState<RecurringExpense[]>([]);
+  const [merchantRules, setMerchantRules] = useState<MerchantRule[]>([]);
+  const [selectedMonth, setSelectedMonth] = useState<string>(getCurrentMonthKey());
+  const [autoLoggedBannerCount, setAutoLoggedBannerCount] = useState(0);
+
+  const refresh = useCallback(async () => {
+    const [expRows, budgetRows, recRows, ruleRows] = await Promise.all([
+      fetchAllExpenses(),
+      fetchAllBudgets(),
+      fetchAllRecurring(),
+      fetchMerchantRules(),
+    ]);
+    setExpenses(expRows);
+    setBudgets(budgetRows);
+    setRecurring(recRows);
+    setMerchantRules(ruleRows);
+  }, []);
+
+  useEffect(() => {
+    let active = true;
+    (async () => {
+      try {
+        const savedLang = await getAppSetting('language');
+        if (active && (savedLang === 'en' || savedLang === 'lt')) {
+          setLanguageState(savedLang);
+        }
+        const logged = await processDueAutoRecurring();
+        if (active && logged > 0) {
+          setAutoLoggedBannerCount(logged);
+        }
+        await refresh();
+      } catch (err) {
+        console.error('Failed to initialize finances DB:', err);
+      } finally {
+        if (active) setReady(true);
+      }
+    })();
+    return () => {
+      active = false;
+    };
+  }, [refresh]);
+
+  const setLanguage = useCallback(async (lang: Language) => {
+    setLanguageState(lang);
+    await setAppSetting('language', lang);
+  }, []);
+
+  const dueManualRecurring = useMemo(() => {
+    const now = new Date();
+    const todayDay = now.getDate();
+    return recurring.filter((item) => {
+      if (!item.active || item.autoLog) return false;
+      const periodKey = getCurrentPeriodKey(item.frequency, now);
+      if (item.lastLoggedPeriod === periodKey) return false;
+      if (item.frequency === 'monthly' && todayDay < item.dayOfMonth) return false;
+      return true;
+    });
+  }, [recurring]);
+
+  const addExpense = useCallback(
+    async (input: NewExpenseInput) => {
+      const id = await insertExpense(input);
+      await refresh();
+      return id;
+    },
+    [refresh]
+  );
+
+  const editExpense = useCallback(
+    async (id: number, updates: UpdateExpenseInput) => {
+      await updateExpense(id, updates);
+      await refresh();
+    },
+    [refresh]
+  );
+
+  const removeExpense = useCallback(
+    async (expense: Expense) => {
+      await deleteExpense(expense.id);
+      if (expense.receiptUri) {
+        deleteReceiptFile(expense.receiptUri);
+      }
+      await refresh();
+    },
+    [refresh]
+  );
+
+  const saveBudget = useCallback(
+    async (category: CategoryId, monthlyLimit: number) => {
+      await upsertBudget(category, monthlyLimit);
+      await refresh();
+    },
+    [refresh]
+  );
+
+  const addRecurring = useCallback(
+    async (input: NewRecurringInput) => {
+      const id = await insertRecurring(input);
+      await processDueAutoRecurring();
+      await refresh();
+      return id;
+    },
+    [refresh]
+  );
+
+  const logRecurringNow = useCallback(
+    async (item: RecurringExpense, overrideAmount?: number) => {
+      await logRecurringForCurrentPeriod(item, overrideAmount);
+      await refresh();
+    },
+    [refresh]
+  );
+
+  const setRecurringActive = useCallback(
+    async (id: number, activeVal: boolean) => {
+      await toggleRecurringActive(id, activeVal);
+      await refresh();
+    },
+    [refresh]
+  );
+
+  const setRecurringAutoLog = useCallback(
+    async (id: number, autoVal: boolean) => {
+      await toggleRecurringAutoLog(id, autoVal);
+      if (autoVal) {
+        await processDueAutoRecurring();
+      }
+      await refresh();
+    },
+    [refresh]
+  );
+
+  const removeRecurring = useCallback(
+    async (id: number) => {
+      await deleteRecurring(id);
+      await refresh();
+    },
+    [refresh]
+  );
+
+  const loadDemoData = useCallback(async () => {
+    await clearAllData();
+    await seedSampleData();
+    setSelectedMonth(getCurrentMonthKey());
+    await refresh();
+  }, [refresh]);
+
+  const resetAllData = useCallback(async () => {
+    for (const exp of expenses) {
+      if (exp.receiptUri) deleteReceiptFile(exp.receiptUri);
+    }
+    await clearAllData();
+    await refresh();
+  }, [expenses, refresh]);
+
+  const dismissAutoLoggedBanner = useCallback(() => {
+    setAutoLoggedBannerCount(0);
+  }, []);
+
+  const t = TRANSLATIONS[language];
+
+  const value = useMemo<FinanceContextValue>(
+    () => ({
+      ready,
+      language,
+      t,
+      setLanguage,
+      expenses,
+      budgets,
+      recurring,
+      merchantRules,
+      selectedMonth,
+      setSelectedMonth,
+      autoLoggedBannerCount,
+      dismissAutoLoggedBanner,
+      dueManualRecurring,
+      refresh,
+      addExpense,
+      editExpense,
+      removeExpense,
+      saveBudget,
+      addRecurring,
+      logRecurringNow,
+      setRecurringActive,
+      setRecurringAutoLog,
+      removeRecurring,
+      loadDemoData,
+      resetAllData,
+    }),
+    [
+      ready,
+      language,
+      t,
+      setLanguage,
+      expenses,
+      budgets,
+      recurring,
+      merchantRules,
+      selectedMonth,
+      autoLoggedBannerCount,
+      dismissAutoLoggedBanner,
+      dueManualRecurring,
+      refresh,
+      addExpense,
+      editExpense,
+      removeExpense,
+      saveBudget,
+      addRecurring,
+      logRecurringNow,
+      setRecurringActive,
+      setRecurringAutoLog,
+      removeRecurring,
+      loadDemoData,
+      resetAllData,
+    ]
+  );
+
+  return <FinanceContext.Provider value={value}>{children}</FinanceContext.Provider>;
+}
+
+export function useFinances(): FinanceContextValue {
+  const ctx = useContext(FinanceContext);
+  if (!ctx) {
+    throw new Error('useFinances must be used inside FinanceProvider');
+  }
+  return ctx;
+}
