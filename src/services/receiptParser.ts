@@ -44,14 +44,50 @@ const DISCOUNT_WORD_REGEX =
   /\b(nuol\.?|nuolaida|akcija|kitos\s*akcijos|discount|rabatt|remise|descuento|coupon|kuponas|promo)\b/i;
 
 // Inline post-discount final price line right under an item, e.g.:
-// "Nuol. -0,70   Galut. kaina 0,99" or "Galut. kaina 2,55" or "Final price 2.55"
+// "Nuol. -0,70   Galut. kaina 0,99" or OCR quirk "Nuol. -1,74 Galut, kaina 2,55"
 const FINAL_PRICE_LINE_REGEX =
-  /\b(?:galut\.?\s*kaina|galutine\s*kaina|final\s*price|nauja\s*kaina)\s*[:=]?\s*(?:€|EUR\s*)?(\d{1,4}[.,]\d{2})(?:\s*(?:€|EUR))?(?:\s+[A-Z*])?$/i;
+  /\b(?:ga[l1i]ut[.,:;\s]*kaina|galutine\s*kaina|final\s*price|nauja\s*kaina)\s*[:=.,]?\s*(?:€|EUR\s*)?(\d{1,4}[.,]\d{2})(?:\s*(?:€|EUR))?(?:\s+[A-Z*])?$/i;
+
+// Safety net: discount line with both a negative discount AND a trailing positive final price
+// e.g. "Nuol. -1,74 <garbled OCR> 2,55" where prevPrice - 1.74 === 2.55
+const DISCOUNT_AND_FINAL_REGEX =
+  /^[^a-zA-Z0-9]*(?:nuol\.?|nuolaida|akcija|discount|rabatt)\b.*?[−-]\s*(\d{1,4}[.,]\d{2}).*?\s(\d{1,4}[.,]\d{2})(?:\s*(?:€|EUR))?(?:\s+[A-Z*])?$/i;
+
+// Known store brands (accent-folded regex -> clean display name) to defeat logo OCR quirks like "Rimip"
+const KNOWN_MERCHANTS: [RegExp, string][] = [
+  [/\brimi[p)\]]*\b/i, 'Rimi'],
+  [/\blidl\b/i, 'Lidl'],
+  [/\bmaxima\b/i, 'Maxima'],
+  [/\b(?:uab\s+palink|iki)\b/i, 'IKI'],
+  [/\bnorfa\b/i, 'Norfa'],
+  [/\bbarbora\b/i, 'Barbora'],
+  [/\bcircle\s*k\b/i, 'Circle K'],
+  [/\bviada\b/i, 'Viada'],
+  [/\bneste\b/i, 'Neste'],
+  [/\bbolt\s*food\b/i, 'Bolt Food'],
+  [/\bwolt\b/i, 'Wolt'],
+  [/\bsteam\b|\bvalve\s+corp/i, 'Steam'],
+  [/\bplaystation\b/i, 'PlayStation'],
+  [/\btelia\b/i, 'Telia'],
+  [/\bignitis\b/i, 'Ignitis'],
+  [/\bvmi\b/i, 'VMI'],
+  [/\bikea\b/i, 'IKEA'],
+  [/\bsenukai\b/i, 'Senukai'],
+  [/\beurovaistine\b/i, 'Eurovaistinė'],
+  [/\bcamelia\b/i, 'Camelia'],
+  [/\bgintarine\b/i, 'Gintarinė vaistinė'],
+  [/\bcaffeine\b/i, 'Caffeine'],
+  [/\bvero\s*cafe\b/i, 'Vero Cafe'],
+  [/\bmcdonald/i, "McDonald's"],
+  [/\bhesburger\b/i, 'Hesburger'],
+  [/\bforum\s*cinemas\b/i, 'Forum Cinemas'],
+  [/\bapollo\b/i, 'Apollo'],
+];
 
 // Inline item-specific discount-only line directly beneath an item (without "Galut. kaina"), e.g.:
 // "Nuol. -0,70"
 const ITEM_DISCOUNT_ONLY_REGEX =
-  /^(nuol\.?|nuolaida|akcija|discount|rabatt)\s*[:=]?\s*(?:€|EUR\s*)?([−-]\s*\d{1,4}[.,]\d{2})(?:\s*(?:€|EUR))?(?:\s+[A-Z*])?$/i;
+  /^[^a-zA-Z0-9]*(nuol\.?|nuolaida|akcija|discount|rabatt)\s*[:=]?\s*(?:€|EUR\s*)?([−-]\s*\d{1,4}[.,]\d{2})(?:\s*(?:€|EUR))?(?:\s+[A-Z*])?$/i;
 
 const AMOUNT_TOKEN_REGEX =
   /(?:€|EUR\s*)?(\d{1,3}(?:[.\s]\d{3})*[.,]\d{2}|\d+[.,]\d{2})(?:\s*(?:€|EUR))?/gi;
@@ -89,6 +125,14 @@ function extractDate(text: string): string {
 }
 
 function extractMerchant(lines: string[]): string {
+  // 1. Check top lines for well-known brands first (fixes logo OCR artifacts like "Rimip" -> "Rimi")
+  const headerBlock = foldAccents(lines.slice(0, 6).join(' '));
+  for (const [pattern, canonical] of KNOWN_MERCHANTS) {
+    if (pattern.test(headerBlock)) {
+      return canonical;
+    }
+  }
+
   const skipNoise =
     /^(receipt|kvitas|elektroninis|invoice|saskaita|date|data|time|tel|phone|www\.|http|uab\s*$|ab\s*$|vat|pvm|code|kodas|address|nr\.|#|\d|[-=_]{3})/i;
 
@@ -203,7 +247,7 @@ export function extractLineItems(
 
     const folded = foldAccents(line);
 
-    // 0. Check for inline "Nuol. -0,70  Galut. kaina 0,99" right after an item!
+    // 0. Check for inline "Nuol. -0,70  Galut. kaina 0,99" (or OCR "Galut, kaina 2,55")
     // Must run BEFORE SUMMARY_STOP_REGEX & trailingPriceRegex so it updates the
     // previous item's price instead of adding a duplicate line item.
     const finalPriceMatch = folded.match(FINAL_PRICE_LINE_REGEX);
@@ -216,16 +260,34 @@ export function extractLineItems(
       continue;
     }
 
+    // 0b. Math-verified fallback if OCR garbled "Galut. kaina" on a "Nuol. -X,XX ... Y,YY" line
+    const discFinalMatch = folded.match(DISCOUNT_AND_FINAL_REGEX);
+    if (discFinalMatch && items.length > 0) {
+      const discAbs = parseFlexibleAmount(discFinalMatch[1]);
+      const finalVal = parseFlexibleAmount(discFinalMatch[2]);
+      const prevPrice = items[items.length - 1].price;
+      if (
+        discAbs !== null &&
+        finalVal !== null &&
+        Math.abs(prevPrice - discAbs - finalVal) <= 0.03
+      ) {
+        items[items.length - 1].price = finalVal;
+        pendingNameParts = [];
+        continue;
+      }
+    }
+
     // Stop once we enter the summary / SUTEIKTOS NUOLAIDOS / payment section
     if (items.length > 0 && SUMMARY_STOP_REGEX.test(folded)) {
       break;
     }
 
-    // Skip merchant header / slogan lines at very top
+    // Skip merchant header / logo OCR lines (e.g. "Rimip", "UAB RIMI LIETUVA") at very top
     if (
       i < 5 &&
       normalizedMerchant.length >= 3 &&
-      normalizeMerchantKey(line) === normalizedMerchant
+      (normalizeMerchantKey(line) === normalizedMerchant ||
+        normalizeMerchantKey(line).startsWith(normalizedMerchant))
     ) {
       pendingNameParts = [];
       continue;
@@ -284,17 +346,14 @@ export function extractLineItems(
     // 3. Try matching a line ending with a price
     const priceMatch = line.match(trailingPriceRegex);
     if (priceMatch) {
-      let rawName = priceMatch[1].trim();
+      const rawNameClean = priceMatch[1].trim();
+      let rawName = rawNameClean;
       const rawPriceStr = priceMatch[2].replace(/\s/g, '');
-      let price = parseFlexibleAmount(rawPriceStr, true);
+      const price = parseFlexibleAmount(rawPriceStr, true);
 
       if (price === null || price === 0 || Math.abs(price) > 100000) {
         pendingNameParts = [];
         continue;
-      }
-
-      if (isDiscount && price > 0 && /-\s*\d/.test(line)) {
-        price = -price;
       }
 
       if (

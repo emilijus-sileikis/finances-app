@@ -86,19 +86,23 @@ const OCR_HTML = `<!DOCTYPE html>
     const cleanedUrl = await preprocessImage(dataUrl);
 
     post({ type: 'progress', jobId, status: 'Reading text on-device...', progress: 0.3 });
-    const result = await Tesseract.recognize(cleanedUrl, 'eng', {
-      logger: (m) => {
-        if (m && typeof m.progress === 'number') {
-          const pct = Math.min(0.98, 0.3 + m.progress * 0.68);
-          post({
-            type: 'progress',
-            jobId,
-            status: m.status === 'recognizing text' ? 'Extracting receipt lines...' : 'Loading on-device OCR...',
-            progress: pct,
-          });
-        }
-      },
-    });
+    const ocrLogger = (m) => {
+      if (m && typeof m.progress === 'number') {
+        const pct = Math.min(0.98, 0.3 + m.progress * 0.68);
+        post({
+          type: 'progress',
+          jobId,
+          status: m.status === 'recognizing text' ? 'Extracting receipt lines...' : 'Loading on-device OCR...',
+          progress: pct,
+        });
+      }
+    };
+    let result;
+    try {
+      result = await Tesseract.recognize(cleanedUrl, 'lit+eng', { logger: ocrLogger });
+    } catch {
+      result = await Tesseract.recognize(cleanedUrl, 'eng', { logger: ocrLogger });
+    }
     post({
       type: 'result',
       jobId,
@@ -163,10 +167,10 @@ const OCR_HTML = `<!DOCTYPE html>
         return;
       }
 
-      // Scanned image PDF fallback: render page 1 to canvas and OCR it!
+      // Scanned image PDF fallback: render page 1 at high DPI to canvas and OCR it!
       post({ type: 'progress', jobId, status: 'Scanned PDF detected — running OCR...', progress: 0.45 });
       const firstPage = await pdf.getPage(1);
-      const viewport = firstPage.getViewport({ scale: 2.0 });
+      const viewport = firstPage.getViewport({ scale: 2.5 });
       const canvas = document.createElement('canvas');
       canvas.width = viewport.width;
       canvas.height = viewport.height;
