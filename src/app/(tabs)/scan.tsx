@@ -23,6 +23,7 @@ import {
   type EditableReceiptItem,
 } from '@/components/ReceiptItemsEditor';
 import { CATEGORIES } from '@/constants/categories';
+import { formatEditableAmount } from '@/constants/currencies';
 import { useFinances } from '@/db/FinanceContext';
 import { getCategoryLabel } from '@/i18n/translations';
 import { parseReceiptText, suggestCategory } from '@/services/receiptParser';
@@ -37,10 +38,20 @@ import {
 } from '@/services/receiptStorage';
 import { Colors } from '@/theme/colors';
 import type { CategoryId } from '@/types/finance';
-import { formatEur, getTodayIso, isValidIsoDate, parseFlexibleAmount } from '@/utils/format';
+import { getTodayIso, isValidIsoDate, parseFlexibleAmount } from '@/utils/format';
 
 export default function ScanScreen() {
-  const { language, t, addExpense, merchantRules, setSelectedMonth } = useFinances();
+  const {
+    language,
+    t,
+    currency,
+    currencyMeta,
+    formatMoney,
+    addExpense,
+    merchantRules,
+    setSelectedMonth,
+  } = useFinances();
+  const ocrLang = currency === 'KRW' ? 'kor+eng' : currency === 'JPY' ? 'jpn+eng' : 'lit+eng';
 
   // Receipt file & OCR/PDF worker state
   const [receiptUri, setReceiptUri] = useState<string | null>(null);
@@ -71,13 +82,13 @@ export default function ScanScreen() {
   const applyParsedText = useCallback(
     (text: string) => {
       setRawText(text);
-      const parsed = parseReceiptText(text, merchantRules);
+      const parsed = parseReceiptText(text, merchantRules, currency);
 
       if (parsed.amount !== null) {
-        setAmountText(parsed.amount.toFixed(2));
+        setAmountText(formatEditableAmount(parsed.amount, currency));
       }
       if (parsed.taxAmount !== null) {
-        setTaxText(parsed.taxAmount.toFixed(2));
+        setTaxText(formatEditableAmount(parsed.taxAmount, currency));
       }
       if (parsed.merchant) {
         setMerchant(parsed.merchant);
@@ -86,14 +97,14 @@ export default function ScanScreen() {
       if (parsed.date) {
         setDate(parsed.date);
       }
-      setDraftItems(toEditableItems(parsed.items));
+      setDraftItems(toEditableItems(parsed.items, currency));
       setCategory(parsed.category);
       setCategoryManuallyPicked(false);
       setCategoryHint(
         t.autoSorted(getCategoryLabel(parsed.category, language), parsed.matchedHint)
       );
     },
-    [merchantRules, language, t]
+    [merchantRules, language, t, currency]
   );
 
   const startOcrForSavedImage = useCallback(
@@ -110,13 +121,14 @@ export default function ScanScreen() {
           id: (prev?.id ?? 0) + 1,
           kind: 'image',
           data: dataUrl,
+          ocrLang,
         }));
       } catch {
         setOcrScanning(false);
         setOcrNotice(t.ocrEmptyNotice);
       }
     },
-    [t]
+    [t, ocrLang]
   );
 
   const handleTakePhoto = async () => {
@@ -168,6 +180,7 @@ export default function ScanScreen() {
         id: (prev?.id ?? 0) + 1,
         kind: 'pdf',
         data: picked.base64,
+        ocrLang,
       }));
     } catch {
       setOcrScanning(false);
@@ -277,7 +290,7 @@ export default function ScanScreen() {
         t.alertSavedTitle,
         t.alertSavedBody(
           cleanTitle,
-          formatEur(parsedAmount),
+          formatMoney(parsedAmount),
           getCategoryLabel(category, language)
         )
       );
@@ -501,28 +514,30 @@ export default function ScanScreen() {
           <View style={styles.formCard}>
             <View style={styles.amountRow}>
               <View style={{ flex: 1.3 }}>
-                <Text style={styles.label}>{t.totalAmountLabel}</Text>
+                <Text style={styles.label}>{t.totalAmountLabel(currencyMeta.symbol)}</Text>
                 <View style={styles.euroInputWrap}>
-                  <Text style={styles.euroSign}>€</Text>
+                  <Text style={styles.euroSign}>{currencyMeta.symbol}</Text>
                   <TextInput
                     value={amountText}
                     onChangeText={setAmountText}
                     keyboardType="decimal-pad"
-                    placeholder="0.00"
+                    placeholder={currencyMeta.decimals === 0 ? '0' : '0.00'}
                     placeholderTextColor={Colors.textMuted}
                     style={styles.amountInput}
                   />
                 </View>
               </View>
               <View style={{ flex: 1 }}>
-                <Text style={styles.label}>{t.taxVatLabel}</Text>
+                <Text style={styles.label}>{t.taxVatLabel(currencyMeta.symbol)}</Text>
                 <View style={styles.euroInputWrap}>
-                  <Text style={[styles.euroSign, { fontSize: 16 }]}>€</Text>
+                  <Text style={[styles.euroSign, { fontSize: 16 }]}>
+                    {currencyMeta.symbol}
+                  </Text>
                   <TextInput
                     value={taxText}
                     onChangeText={setTaxText}
                     keyboardType="decimal-pad"
-                    placeholder="0.00"
+                    placeholder={currencyMeta.decimals === 0 ? '0' : '0.00'}
                     placeholderTextColor={Colors.textMuted}
                     style={[styles.amountInput, { fontSize: 18 }]}
                   />
@@ -609,7 +624,7 @@ export default function ScanScreen() {
               items={draftItems}
               onChange={setDraftItems}
               receiptTotal={parseFlexibleAmount(amountText)}
-              onApplyItemsSum={(sum) => setAmountText(sum.toFixed(2))}
+              onApplyItemsSum={(sum) => setAmountText(formatEditableAmount(sum, currency))}
             />
 
             <Text style={styles.label}>{t.notesOptionalLabel}</Text>

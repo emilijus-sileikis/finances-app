@@ -10,6 +10,7 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { TrendBarChart } from '@/components/TrendBarChart';
+import { CURRENCIES } from '@/constants/currencies';
 import { useFinances } from '@/db/FinanceContext';
 import {
   exportExpensesCsv,
@@ -22,7 +23,7 @@ import {
   getMonthExpenses,
 } from '@/services/savingsEngine';
 import { Colors } from '@/theme/colors';
-import { formatEur, formatMonthLabel } from '@/utils/format';
+import { formatMonthLabel } from '@/utils/format';
 
 const TRIM_OPTIONS = [10, 15, 20, 30, 50] as const;
 
@@ -31,6 +32,10 @@ export default function InsightsScreen() {
     language,
     t,
     setLanguage,
+    currency,
+    currencyMeta,
+    setCurrency,
+    formatMoney,
     expenses,
     budgets,
     recurring,
@@ -46,8 +51,9 @@ export default function InsightsScreen() {
   );
 
   const tips = useMemo(
-    () => generateSavingsTips(expenses, budgets, recurring, selectedMonth, language),
-    [expenses, budgets, recurring, selectedMonth, language]
+    () =>
+      generateSavingsTips(expenses, budgets, recurring, selectedMonth, language, currency),
+    [expenses, budgets, recurring, selectedMonth, language, currency]
   );
 
   const trend = useMemo(
@@ -91,7 +97,7 @@ export default function InsightsScreen() {
 
   const handleExportBackup = async () => {
     try {
-      await exportFullBackupJson({ expenses, budgets, recurring });
+      await exportFullBackupJson({ currency, expenses, budgets, recurring });
     } catch {
       Alert.alert('JSON', 'Could not export JSON backup.');
     }
@@ -103,7 +109,7 @@ export default function InsightsScreen() {
       return;
     }
     try {
-      await exportExpensesCsv(expenses);
+      await exportExpensesCsv(expenses, currency);
     } catch {
       Alert.alert('CSV', 'Could not export CSV.');
     }
@@ -139,7 +145,7 @@ export default function InsightsScreen() {
               <Text style={styles.highlightLabel}>{t.estSavingTitle}</Text>
               <Text style={styles.highlightBig}>
                 {t.upToPerMonth(
-                  formatEur(Math.min(maxTipSavings, discretionaryTotal || maxTipSavings))
+                  formatMoney(Math.min(maxTipSavings, discretionaryTotal || maxTipSavings))
                 )}
               </Text>
               <Text style={styles.highlightSub}>{t.estSavingSub}</Text>
@@ -170,12 +176,13 @@ export default function InsightsScreen() {
                 <Text style={styles.tipTitle}>{tip.title}</Text>
               </View>
               <Text style={styles.tipBody}>{tip.body}</Text>
-              {tip.potentialMonthlySavings && tip.potentialMonthlySavings >= 5 ? (
+              {tip.potentialMonthlySavings &&
+              tip.potentialMonthlySavings >= 5 * currencyMeta.eurRateApprox ? (
                 <View style={styles.savingsPill}>
                   <Text style={[styles.savingsPillText, { color: accent }]}>
                     {t.potentialImpact(
-                      formatEur(tip.potentialMonthlySavings),
-                      formatEur(tip.potentialMonthlySavings * 12, false)
+                      formatMoney(tip.potentialMonthlySavings),
+                      formatMoney(tip.potentialMonthlySavings * 12, false)
                     )}
                   </Text>
                 </View>
@@ -189,7 +196,7 @@ export default function InsightsScreen() {
         <View style={styles.card}>
           <Text style={styles.simDesc}>
             {t.simulatorDesc}
-            <Text style={styles.bold}>{formatEur(discretionaryTotal)}</Text>
+            <Text style={styles.bold}>{formatMoney(discretionaryTotal)}</Text>
           </Text>
           <Text style={styles.simSub}>{t.ifYouTrim}</Text>
           <View style={styles.trimRow}>
@@ -211,12 +218,12 @@ export default function InsightsScreen() {
           <View style={styles.simResultRow}>
             <View style={styles.simBox}>
               <Text style={styles.simBoxLabel}>{t.youSaveMonthly}</Text>
-              <Text style={styles.simBoxVal}>{formatEur(simulatedMonthly)}</Text>
+              <Text style={styles.simBoxVal}>{formatMoney(simulatedMonthly)}</Text>
             </View>
             <View style={styles.simBox}>
               <Text style={styles.simBoxLabel}>{t.youSaveYearly}</Text>
               <Text style={[styles.simBoxVal, { color: Colors.primary }]}>
-                {formatEur(simulatedYearly, false)}
+                {formatMoney(simulatedYearly, false)}
               </Text>
             </View>
           </View>
@@ -229,6 +236,7 @@ export default function InsightsScreen() {
             data={trend}
             selectedMonth={selectedMonth}
             language={language}
+            currency={currency}
             emptyLabel={t.trendEmpty}
           />
         </View>
@@ -239,12 +247,55 @@ export default function InsightsScreen() {
           <View style={styles.simResultRow}>
             <View style={styles.simBox}>
               <Text style={styles.simBoxLabel}>{t.thisMonthTaxes}</Text>
-              <Text style={styles.simBoxVal}>{formatEur(monthTaxes)}</Text>
+              <Text style={styles.simBoxVal}>{formatMoney(monthTaxes)}</Text>
             </View>
             <View style={styles.simBox}>
               <Text style={styles.simBoxLabel}>{t.ytdTaxes(selectedYear)}</Text>
-              <Text style={styles.simBoxVal}>{formatEur(ytdTaxes)}</Text>
+              <Text style={styles.simBoxVal}>{formatMoney(ytdTaxes)}</Text>
             </View>
+          </View>
+        </View>
+
+        {/* Currency Setting */}
+        <Text style={styles.sectionTitle}>{t.currencySectionTitle}</Text>
+        <View style={styles.card}>
+          <Text style={styles.backupNote}>{t.currencyNote}</Text>
+          <View style={styles.currencyGrid}>
+            {CURRENCIES.map((cur) => {
+              const active = currency === cur.code;
+              return (
+                <Pressable
+                  key={cur.code}
+                  onPress={() => setCurrency(cur.code)}
+                  style={[
+                    styles.currencyOption,
+                    active && styles.langOptionActive,
+                  ]}
+                >
+                  <Text
+                    style={[
+                      styles.currencySymbol,
+                      active && { color: Colors.primary },
+                    ]}
+                  >
+                    {cur.symbol}
+                  </Text>
+                  <View style={{ flex: 1 }}>
+                    <Text
+                      style={[
+                        styles.currencyCode,
+                        active && { color: Colors.text },
+                      ]}
+                    >
+                      {cur.code}
+                    </Text>
+                    <Text style={styles.currencyName} numberOfLines={1}>
+                      {cur.name}
+                    </Text>
+                  </View>
+                </Pressable>
+              );
+            })}
           </View>
         </View>
 
@@ -515,6 +566,39 @@ const styles = StyleSheet.create({
     color: Colors.textSecondary,
     fontSize: 14,
     fontWeight: '700',
+  },
+  currencyGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  currencyOption: {
+    width: '48.5%',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderRadius: 12,
+    backgroundColor: Colors.bg,
+    borderWidth: 1,
+    borderColor: Colors.border,
+  },
+  currencySymbol: {
+    color: Colors.textSecondary,
+    fontSize: 18,
+    fontWeight: '800',
+    minWidth: 22,
+    textAlign: 'center',
+  },
+  currencyCode: {
+    color: Colors.textSecondary,
+    fontSize: 13,
+    fontWeight: '800',
+  },
+  currencyName: {
+    color: Colors.textMuted,
+    fontSize: 10,
   },
   backupNote: {
     color: Colors.textSecondary,

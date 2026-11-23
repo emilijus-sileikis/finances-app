@@ -1,10 +1,11 @@
 import React from 'react';
 import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { formatEditableAmount, type CurrencyCode } from '@/constants/currencies';
 import { useFinances } from '@/db/FinanceContext';
 import { Colors } from '@/theme/colors';
 import type { NewExpenseItemInput } from '@/types/finance';
-import { formatEur, parseFlexibleAmount } from '@/utils/format';
+import { parseFlexibleAmount } from '@/utils/format';
 
 export interface EditableReceiptItem {
   key: string;
@@ -14,13 +15,14 @@ export interface EditableReceiptItem {
 }
 
 export function toEditableItems(
-  items: { name: string; quantity?: number; price: number }[]
+  items: { name: string; quantity?: number; price: number }[],
+  currency: CurrencyCode = 'EUR'
 ): EditableReceiptItem[] {
   return items.map((item, idx) => ({
     key: `item_${Date.now()}_${idx}_${Math.random().toString(36).slice(2, 6)}`,
     name: item.name,
     quantityText: String(item.quantity ?? 1),
-    priceText: item.price.toFixed(2),
+    priceText: formatEditableAmount(item.price, currency),
   }));
 }
 
@@ -50,19 +52,20 @@ export function ReceiptItemsEditor({
   receiptTotal,
   onApplyItemsSum,
 }: ReceiptItemsEditorProps) {
-  const { t } = useFinances();
+  const { t, currencyMeta, formatMoney } = useFinances();
 
   const itemsSum = items.reduce((sum, item) => {
     const p = parseFlexibleAmount(item.priceText, true);
     return p !== null ? sum + p : sum;
   }, 0);
   const roundedSum = Math.round(itemsSum * 100) / 100;
+  const mismatchTolerance = currencyMeta.decimals === 0 ? 1 : 0.02;
 
   const hasMismatch =
     items.length > 0 &&
     receiptTotal !== null &&
     receiptTotal > 0 &&
-    Math.abs(roundedSum - receiptTotal) > 0.02;
+    Math.abs(roundedSum - receiptTotal) > mismatchTolerance;
 
   const diff = receiptTotal !== null ? Math.abs(roundedSum - receiptTotal) : 0;
 
@@ -130,12 +133,14 @@ export function ReceiptItemsEditor({
                   style={styles.qtyInput}
                 />
                 <View style={styles.priceWrap}>
-                  <Text style={[styles.euro, isDiscount && { color: Colors.primary }]}>€</Text>
+                  <Text style={[styles.euro, isDiscount && { color: Colors.primary }]}>
+                    {currencyMeta.symbol}
+                  </Text>
                   <TextInput
                     value={item.priceText}
                     onChangeText={(val) => handleUpdate(item.key, 'priceText', val)}
                     keyboardType="numbers-and-punctuation"
-                    placeholder={t.pricePlaceholder}
+                    placeholder={currencyMeta.decimals === 0 ? '0' : t.pricePlaceholder}
                     placeholderTextColor={Colors.textMuted}
                     style={[styles.priceInput, isDiscount && { color: Colors.primary }]}
                   />
@@ -153,7 +158,7 @@ export function ReceiptItemsEditor({
 
           <View style={styles.sumRow}>
             <Text style={styles.sumLabel}>{t.itemsSumLabel}</Text>
-            <Text style={styles.sumVal}>{formatEur(roundedSum)}</Text>
+            <Text style={styles.sumVal}>{formatMoney(roundedSum)}</Text>
           </View>
         </View>
       )}
@@ -164,9 +169,9 @@ export function ReceiptItemsEditor({
             <Ionicons name="warning-outline" size={15} color={Colors.warning} />
             <Text style={styles.mismatchText}>
               {t.itemsMismatch(
-                formatEur(roundedSum),
-                formatEur(receiptTotal),
-                formatEur(diff)
+                formatMoney(roundedSum),
+                formatMoney(receiptTotal),
+                formatMoney(diff)
               )}
             </Text>
           </View>
@@ -176,7 +181,7 @@ export function ReceiptItemsEditor({
               style={styles.applyBtn}
             >
               <Text style={styles.applyBtnText}>
-                {t.useItemsSumBtn} ({formatEur(roundedSum)})
+                {t.useItemsSumBtn} ({formatMoney(roundedSum)})
               </Text>
             </Pressable>
           )}

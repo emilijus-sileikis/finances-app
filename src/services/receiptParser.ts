@@ -1,4 +1,5 @@
 import { CATEGORIES } from '@/constants/categories';
+import { getCurrencyMeta, type CurrencyCode } from '@/constants/currencies';
 import type {
   CategoryId,
   MerchantRule,
@@ -17,31 +18,35 @@ import {
  * quirks like "sutaupéte" or "Mokéti" match Lithuanian & EU keywords reliably.
  */
 function foldAccents(input: string): string {
-  return input.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+  // Strip Latin combining accents while re-composing non-Latin scripts (e.g. Korean Hangul) via NFC
+  return input
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .normalize('NFC');
 }
 
 const TOTAL_LINE_REGEX =
-  /\b(grand\s*total|amount\s*due|balance\s*due|total\s*eur|total|sum|suma|is\s*viso|viso|moketi|gesamt|zu\s*zahlen|betrag|a\s*payer|ttc|importe|totale|pirkinys|banko\s*kortele|card\s*payment)\b/i;
+  /\b(grand\s*total|amount\s*due|balance\s*due|total\s*eur|total|sum|suma|is\s*viso|viso|moketi|gesamt|zu\s*zahlen|betrag|a\s*payer|ttc|importe|totale|pirkinys|banko\s*kortele|card\s*payment)\b|(합계|총액|결제금액|받을금액|청구금액|승인금액|합\s*계|총\s*액)/i;
 
 const SUBTOTAL_EXCLUDE_REGEX =
-  /\b(sub\s*total|subtotal|be\s*pvm|suma\s*su\s*pvm|pvm\s*suma|netto|net\s*amount|change|graza|cash\s*tendered|sutaup|likutis|uzdirbti)\b/i;
+  /\b(sub\s*total|subtotal|be\s*pvm|suma\s*su\s*pvm|pvm\s*suma|netto|net\s*amount|change|graza|cash\s*tendered|sutaup|likutis|uzdirbti)\b|(거스름돈|과세물품|공급가액|면세물품)/i;
 
 const TAX_LINE_REGEX =
-  /\b(vat|pvm|tax|taxes|mwst|ust|tva|iva|btw|moms|gpm|mokestis|mokesciai)\b/i;
+  /\b(vat|pvm|tax|taxes|mwst|ust|tva|iva|btw|moms|gpm|mokestis|mokesciai)\b|(부가세|부가가치세|세액)/i;
 
 // Lines that signal the start of the receipt summary/discounts-recap/payment block.
 // Matched against accent-folded text!
 const SUMMARY_STOP_REGEX =
-  /\b(suteiktos\s*nuolaidos|nuolaidu\s*suvestin|jus\s*sutaupete|sutaupete|you\s*saved|mokejimas\s*kortele|bekontaktis\s*atsiskaitymas|is\s*viso|viso\s*mok|viso\b|moketi\b|grand\s*total|amount\s*due|balance\s*due|total\b|suma\s*mok|suma\b|gesamt|zu\s*zahlen|a\s*payer|banko\s*kortele|kortele\b|grynieji|graza|change\b|apmoketa|be\s*pvm|su\s*pvm|pvm\s*suma|pvm\s*\d|vat\s*\d|uzdirbti\s*mano)\b/i;
+  /\b(suteiktos\s*nuolaidos|nuolaidu\s*suvestin|jus\s*sutaupete|sutaupete|you\s*saved|mokejimas\s*kortele|bekontaktis\s*atsiskaitymas|is\s*viso|viso\s*mok|viso\b|moketi\b|grand\s*total|amount\s*due|balance\s*due|total\b|suma\s*mok|suma\b|gesamt|zu\s*zahlen|a\s*payer|banko\s*kortele|kortele\b|grynieji|graza|change\b|apmoketa|be\s*pvm|su\s*pvm|pvm\s*suma|pvm\s*\d|vat\s*\d|uzdirbti\s*mano)\b|(합계|총액|결제금액|받을금액|청구금액|부가세|공급가액|카드결제|신용카드|승인번호)/i;
 
 // Non-item metadata/header/footer lines (matched against accent-folded text)
 const IGNORE_ITEM_LINE_REGEX =
-  /\b(uab\b|ab\b|mb\b|gmbh|ltd|llc|pvm\s*mok|imones\s*kod|moketojo\s*kod|kodas|kvitas|kvito\s*nr|elektroninis\s*kvitas|pirkejas|cekis|kasos|kasinink|parduotuv|adresas|gatve|vilnius|kaunas|klaipeda|siauliai|panevezys|tel\.|telefon|www\.|http|el\.\s*past|info\.|invoice|saskaita|receipt|visa\b|mastercard|maestro|terminal|autorizacijos|saugokite|patikrinimui|saugos\s*modulio|pardavimas|pirkinys|laikas|auth|aid:|pan:|rrn\b|taskai|lojalumo|mano\s*rimi|aciu|thank\s*you|sutaup|likutis|uzdirbti|balance|prekiu\s*kiekis|tarifas|pvm\b|vat\b|mwst\b|tva\b|tax\b|subtotal|sub\s*total|be\s*pvm|su\s*pvm|graza|grynieji|cash\b|kortele|card\b|verta\s*rinktis)\b/i;
+  /\b(uab\b|ab\b|mb\b|gmbh|ltd|llc|pvm\s*mok|imones\s*kod|moketojo\s*kod|kodas|kvitas|kvito\s*nr|elektroninis\s*kvitas|pirkejas|cekis|kasos|kasinink|parduotuv|adresas|gatve|vilnius|kaunas|klaipeda|siauliai|panevezys|tel\.|telefon|www\.|http|el\.\s*past|info\.|invoice|saskaita|receipt|visa\b|mastercard|maestro|terminal|autorizacijos|saugokite|patikrinimui|saugos\s*modulio|pardavimas|pirkinys|laikas|auth|aid:|pan:|rrn\b|taskai|lojalumo|mano\s*rimi|aciu|thank\s*you|sutaup|likutis|uzdirbti|balance|prekiu\s*kiekis|tarifas|pvm\b|vat\b|mwst\b|tva\b|tax\b|subtotal|sub\s*total|be\s*pvm|su\s*pvm|graza|grynieji|cash\b|kortele|card\b|verta\s*rinktis)\b|(사업자|대표자|영수증|거래일시|매장명|전화번호|승인번호|카드번호|포인트|적립)/i;
 
 const ADDRESS_LINE_REGEX = /\bg\.\s*\d+|\bpr\.\s*\d+|\bstr\.\s*\d+/i;
 
 const DISCOUNT_WORD_REGEX =
-  /\b(nuol\.?|nuolaida|akcija|kitos\s*akcijos|discount|rabatt|remise|descuento|coupon|kuponas|promo)\b/i;
+  /\b(nuol\.?|nuolaida|akcija|kitos\s*akcijos|discount|rabatt|remise|descuento|coupon|kuponas|promo)\b|(할인|에누리|쿠폰)/i;
 
 // Inline post-discount final price line right under an item, e.g.:
 // "Nuol. -0,70   Galut. kaina 0,99" or OCR quirk "Nuol. -1,74 Galut, kaina 2,55"
@@ -82,24 +87,48 @@ const KNOWN_MERCHANTS: [RegExp, string][] = [
   [/\bhesburger\b/i, 'Hesburger'],
   [/\bforum\s*cinemas\b/i, 'Forum Cinemas'],
   [/\bapollo\b/i, 'Apollo'],
+  [/\be-?mart\b|이마트/i, 'Emart'],
+  [/\bhomeplus\b|홈플러스/i, 'Homeplus'],
+  [/\bgs25\b/i, 'GS25'],
+  [/\bcu\b/i, 'CU'],
+  [/\bdaiso\b|다이소/i, 'Daiso'],
+  [/\bolive\s*young\b|올리브영/i, 'Olive Young'],
+  [/\bcoupang\b|쿠팡/i, 'Coupang'],
+  [/\bstarbucks\b|스타벅스/i, 'Starbucks'],
 ];
 
 // Inline item-specific discount-only line directly beneath an item (without "Galut. kaina"), e.g.:
-// "Nuol. -0,70"
+// "Nuol. -0,70" or "할인 -1,000"
 const ITEM_DISCOUNT_ONLY_REGEX =
-  /^[^a-zA-Z0-9]*(nuol\.?|nuolaida|akcija|discount|rabatt)\s*[:=]?\s*(?:€|EUR\s*)?([−-]\s*\d{1,4}[.,]\d{2})(?:\s*(?:€|EUR))?(?:\s+[A-Z*])?$/i;
+  /^[^a-zA-Z0-9가-힣]*(nuol\.?|nuolaida|akcija|discount|rabatt|할인|쿠폰)\s*[:=]?\s*(?:€|\$|£|₩|¥|EUR\s*|KRW\s*)?([−-]\s*(?:\d{1,3}(?:,\d{3})+|\d{1,4}[.,]\d{2}|\d{2,7}))(?:\s*(?:€|\$|£|원|₩|¥|EUR|KRW))?(?:\s+[A-Z*])?$/i;
 
-const AMOUNT_TOKEN_REGEX =
-  /(?:€|EUR\s*)?(\d{1,3}(?:[.\s]\d{3})*[.,]\d{2}|\d+[.,]\d{2})(?:\s*(?:€|EUR))?/gi;
+const AMOUNT_TOKEN_DECIMAL_REGEX =
+  /(?:€|\$|£|¥|₩|EUR\s*|USD\s*|GBP\s*|PLN\s*)?(\d{1,3}(?:[.\s]\d{3})*[.,]\d{2}|\d+[.,]\d{2})(?:\s*(?:€|\$|£|zł|EUR|USD|GBP|PLN))?/gi;
 
-function extractNumbersFromLine(line: string): number[] {
+const AMOUNT_TOKEN_INTEGER_REGEX =
+  /(?:₩|¥|KRW\s*|JPY\s*)?(\d{1,3}(?:,\d{3})+|\d{3,8})(?:\s*(?:원|₩|¥|KRW|JPY))?/gi;
+
+function extractNumbersFromLine(line: string, isZeroDecimal = false): number[] {
   const matches: number[] = [];
+  const regex = new RegExp(
+    isZeroDecimal ? AMOUNT_TOKEN_INTEGER_REGEX.source : AMOUNT_TOKEN_DECIMAL_REGEX.source,
+    'gi'
+  );
+  const maxAllowed = isZeroDecimal ? 100000000 : 500000;
   let m: RegExpExecArray | null;
-  const regex = new RegExp(AMOUNT_TOKEN_REGEX.source, 'gi');
   while ((m = regex.exec(line)) !== null) {
     const raw = m[1].replace(/\s/g, '');
     const parsed = parseFlexibleAmount(raw);
-    if (parsed !== null && parsed > 0 && parsed < 500000) {
+    if (parsed !== null && parsed > 0 && parsed < maxAllowed) {
+      if (
+        isZeroDecimal &&
+        !raw.includes(',') &&
+        parsed >= 2000 &&
+        parsed <= 2099 &&
+        !/[₩¥원]|KRW|JPY/i.test(m[0])
+      ) {
+        continue;
+      }
       matches.push(parsed);
     }
   }
@@ -164,8 +193,8 @@ function parseQuantity(raw: string): number | null {
 
 function cleanItemName(raw: string): string {
   return raw
-    .replace(/^[\d#*•\-–—\s]{1,4}(?=[A-Za-zÀ-ž])/, '')
-    .replace(/\s*(?:€|EUR)\s*$/i, '')
+    .replace(/^[\d#*•\-–—\s]{1,4}(?=[A-Za-zÀ-ž가-힣])/, '')
+    .replace(/\s*(?:€|\$|£|₩|¥|원|zł|EUR|KRW|USD|GBP|JPY|PLN)\s*$/i, '')
     .replace(/[\s.\-_:;]+$/, '')
     .replace(/\s+/g, ' ')
     .trim();
@@ -188,9 +217,8 @@ function isLikelyStandaloneItemName(line: string): boolean {
   ) {
     return false;
   }
-  const letterCount = (line.match(/[A-Za-zÀ-ž]/g) ?? []).length;
+  const letterCount = (line.match(/[A-Za-zÀ-ž가-힣]/g) ?? []).length;
   if (letterCount < 2) return false;
-  // Skip masked card / loyalty numbers like XXXXXXXXX8428
   if (/X{5,}/i.test(line)) return false;
   if (/^\d{4}[-./]\d{2}[-./]\d{2}/.test(line) || /^\d{2}[.:]\d{2}[.:]\d{2}/.test(line)) {
     return false;
@@ -218,16 +246,20 @@ function isLikelyStandaloneItemName(line: string): boolean {
 export function extractLineItems(
   lines: string[],
   receiptTotal: number | null,
-  merchant: string
+  merchant: string,
+  currency: CurrencyCode = 'EUR'
 ): NewExpenseItemInput[] {
   const items: NewExpenseItemInput[] = [];
   const normalizedMerchant = normalizeMerchantKey(merchant);
+  const isZeroDecimal = getCurrencyMeta(currency).decimals === 0;
+  const maxItemPrice = isZeroDecimal ? 100000000 : 100000;
 
   const qtyDetailRegex =
-    /^(\d+(?:[.,]\d{1,3})?)\s*(?:vnt\.?|pcs\.?|kg|g|l|ml|pak\.?)?\s*[xX*×]\s*(?:€|EUR\s*)?(\d+[.,]\d{2})(?:\s*(?:€|EUR))?(?:\s+(?:€|EUR\s*)?([−-]?\d+[.,]\d{2}))?(?:\s*(?:€|EUR))?(?:\s+[A-Z*])?$/i;
+    /^(\d+(?:[.,]\d{1,3})?)\s*(?:vnt\.?|pcs\.?|kg|g|l|ml|pak\.?|개)?\s*[xX*×]\s*(?:€|\$|£|₩|¥|EUR\s*|KRW\s*)?(\d{1,3}(?:,\d{3})+|\d+[.,]\d{2}|\d{3,7})(?:\s*(?:€|\$|£|원|₩|¥|EUR|KRW))?(?:\s+(?:€|\$|£|₩|¥|EUR\s*)?([−-]?(?:\d{1,3}(?:,\d{3})+|\d+[.,]\d{2}|\d{3,7})))?(?:\s*(?:€|\$|£|원|₩|¥|EUR|KRW))?(?:\s+[A-Z*])?$/i;
 
-  const trailingPriceRegex =
-    /^(.*?)\s+(?:€|EUR\s*)?([−-]?\s*\d{1,4}[.,]\d{2})(?:\s*(?:€|EUR))?(?:\s+[A-Z0-9*]{1,2})?$/i;
+  const trailingPriceRegex = isZeroDecimal
+    ? /^(.*?)\s+(?:₩|¥|KRW\s*|JPY\s*)?([−-]?\s*(?:\d{1,3}(?:,\d{3})+|\d{3,8}))(?:\s*(?:원|₩|¥|KRW|JPY))?(?:\s+[A-Z0-9*]{1,2})?$/i
+    : /^(.*?)\s+(?:€|\$|£|EUR\s*|USD\s*|GBP\s*|PLN\s*)?([−-]?\s*\d{1,4}[.,]\d{2})(?:\s*(?:€|\$|£|zł|EUR|USD|GBP|PLN))?(?:\s+[A-Z0-9*]{1,2})?$/i;
 
   const leadingQtyRegex = /^(\d+(?:[.,]\d{1,2})?)\s*[xX*×]\s+(.+)$/;
 
@@ -351,7 +383,7 @@ export function extractLineItems(
       const rawPriceStr = priceMatch[2].replace(/\s/g, '');
       const price = parseFlexibleAmount(rawPriceStr, true);
 
-      if (price === null || price === 0 || Math.abs(price) > 100000) {
+      if (price === null || price === 0 || Math.abs(price) > maxItemPrice) {
         pendingNameParts = [];
         continue;
       }
@@ -394,7 +426,7 @@ export function extractLineItems(
           : rawName;
 
       const name = cleanItemName(combinedRaw);
-      const letterCount = (name.match(/[A-Za-zÀ-ž]/g) ?? []).length;
+      const letterCount = (name.match(/[A-Za-zÀ-ž가-힣]/g) ?? []).length;
 
       if (letterCount >= 2 && name.length >= 2) {
         items.push({ name, quantity, price });
@@ -499,8 +531,10 @@ export function suggestCategory(
 
 export function parseReceiptText(
   rawText: string,
-  learnedRules: MerchantRule[]
+  learnedRules: MerchantRule[],
+  currency: CurrencyCode = 'EUR'
 ): ParsedReceipt {
+  const isZeroDecimal = getCurrencyMeta(currency).decimals === 0;
   const lines = rawText
     .split(/\r?\n/)
     .map((l) => l.trim())
@@ -515,13 +549,13 @@ export function parseReceiptText(
     const folded = foldAccents(line);
     if (SUBTOTAL_EXCLUDE_REGEX.test(folded)) continue;
     if (TOTAL_LINE_REGEX.test(folded)) {
-      const nums = extractNumbersFromLine(line);
+      const nums = extractNumbersFromLine(line, isZeroDecimal);
       if (nums.length > 0) {
         bestTotal = nums[nums.length - 1];
         break;
       }
       if (i + 1 < lines.length) {
-        const nextNums = extractNumbersFromLine(lines[i + 1]);
+        const nextNums = extractNumbersFromLine(lines[i + 1], isZeroDecimal);
         if (nextNums.length > 0) {
           bestTotal = nextNums[nextNums.length - 1];
           break;
@@ -531,29 +565,29 @@ export function parseReceiptText(
   }
 
   if (bestTotal === null) {
-    const allNums = lines.flatMap((line) => extractNumbersFromLine(line));
+    const allNums = lines
+      .filter((line) => !IGNORE_ITEM_LINE_REGEX.test(foldAccents(line)))
+      .flatMap((line) => extractNumbersFromLine(line, isZeroDecimal));
     if (allNums.length > 0) {
       bestTotal = Math.max(...allNums);
     }
   }
 
-  // Extract VAT / Tax amount (handles both inline "PVM 21% 1,61" and tabular
-  // "Mokestis Suma su PVM Be PVM PVM suma" -> next line "A 21,00 % 12,88 10,64 2,24")
+  // Extract VAT / Tax amount (handles both inline "PVM 21% 1,61" / "부가세 1,136" and tabular Rimi VAT)
   let bestTax: number | null = null;
   for (let i = lines.length - 1; i >= 0; i--) {
     const line = lines[i];
     const folded = foldAccents(line);
     if (TAX_LINE_REGEX.test(folded)) {
-      const nums = extractNumbersFromLine(line).filter(
+      const nums = extractNumbersFromLine(line, isZeroDecimal).filter(
         (n) => bestTotal === null || n <= bestTotal
       );
       if (nums.length > 0) {
         bestTax = nums[nums.length - 1];
         break;
       }
-      // Tabular VAT header (e.g. Rimi "Mokestis Suma su PVM Be PVM PVM suma")
       if (i + 1 < lines.length) {
-        const nextNums = extractNumbersFromLine(lines[i + 1]).filter(
+        const nextNums = extractNumbersFromLine(lines[i + 1], isZeroDecimal).filter(
           (n) => bestTotal === null || n <= bestTotal
         );
         if (nextNums.length > 0) {
@@ -564,7 +598,7 @@ export function parseReceiptText(
     }
   }
 
-  const items = extractLineItems(lines, bestTotal, merchant);
+  const items = extractLineItems(lines, bestTotal, merchant, currency);
   const catResult = suggestCategory(rawText, merchant, learnedRules);
 
   return {

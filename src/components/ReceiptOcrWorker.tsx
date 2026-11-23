@@ -7,6 +7,8 @@ export interface OcrJobPayload {
   kind: 'image' | 'pdf';
   /** For image: data URL (data:image/...;base64,...). For pdf: raw base64 string. */
   data: string;
+  /** Tesseract OCR language pack, e.g. 'lit+eng' or 'kor+eng' */
+  ocrLang?: string;
 }
 
 interface ReceiptOcrWorkerProps {
@@ -77,7 +79,7 @@ const OCR_HTML = `<!DOCTYPE html>
     });
   }
 
-  async function runImageOcr(jobId, dataUrl, kind) {
+  async function runImageOcr(jobId, dataUrl, kind, ocrLang) {
     if (typeof Tesseract === 'undefined') {
       post({ type: 'error', jobId, message: 'OCR engine unavailable offline. File is attached — enter details manually or paste text.' });
       return;
@@ -97,9 +99,10 @@ const OCR_HTML = `<!DOCTYPE html>
         });
       }
     };
+    const langPack = ocrLang || 'lit+eng';
     let result;
     try {
-      result = await Tesseract.recognize(cleanedUrl, 'lit+eng', { logger: ocrLogger });
+      result = await Tesseract.recognize(cleanedUrl, langPack, { logger: ocrLogger });
     } catch {
       result = await Tesseract.recognize(cleanedUrl, 'eng', { logger: ocrLogger });
     }
@@ -138,7 +141,7 @@ const OCR_HTML = `<!DOCTYPE html>
       .join('\\n');
   }
 
-  async function runPdfParse(jobId, base64Pdf) {
+  async function runPdfParse(jobId, base64Pdf, ocrLang) {
     try {
       if (typeof pdfjsLib === 'undefined') {
         post({ type: 'error', jobId, message: 'PDF reader unavailable offline. PDF is attached — enter details manually.' });
@@ -177,7 +180,7 @@ const OCR_HTML = `<!DOCTYPE html>
       const ctx = canvas.getContext('2d');
       await firstPage.render({ canvasContext: ctx, viewport }).promise;
       const imgDataUrl = canvas.toDataURL('image/jpeg', 0.9);
-      await runImageOcr(jobId, imgDataUrl, 'pdf');
+      await runImageOcr(jobId, imgDataUrl, 'pdf', ocrLang);
     } catch (err) {
       post({
         type: 'error',
@@ -187,12 +190,12 @@ const OCR_HTML = `<!DOCTYPE html>
     }
   }
 
-  window.startReceiptJob = async function(jobId, kind, data) {
+  window.startReceiptJob = async function(jobId, kind, data, ocrLang) {
     try {
       if (kind === 'pdf') {
-        await runPdfParse(jobId, data);
+        await runPdfParse(jobId, data, ocrLang);
       } else {
-        await runImageOcr(jobId, data, 'image');
+        await runImageOcr(jobId, data, 'image', ocrLang);
       }
     } catch (err) {
       post({ type: 'error', jobId, message: (err && err.message) ? err.message : 'Scan failed.' });
@@ -229,8 +232,9 @@ export function ReceiptOcrWorker({
 
       const safeKind = JSON.stringify(payload.kind);
       const safeData = JSON.stringify(payload.data);
+      const safeLang = JSON.stringify(payload.ocrLang ?? 'lit+eng');
       webViewRef.current?.injectJavaScript(`
-        window.startReceiptJob(${payload.id}, ${safeKind}, ${safeData});
+        window.startReceiptJob(${payload.id}, ${safeKind}, ${safeData}, ${safeLang});
         true;
       `);
     },

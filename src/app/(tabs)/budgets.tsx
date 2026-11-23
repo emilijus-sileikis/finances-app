@@ -19,7 +19,6 @@ import { getMonthExpenses } from '@/services/savingsEngine';
 import { Colors } from '@/theme/colors';
 import type { CategoryId, RecurringFrequency } from '@/types/finance';
 import {
-  formatEur,
   formatMonthLabel,
   getCurrentPeriodKey,
   parseFlexibleAmount,
@@ -29,6 +28,9 @@ export default function BudgetsScreen() {
   const {
     language,
     t,
+    currency,
+    currencyMeta,
+    formatMoney,
     expenses,
     budgets,
     recurring,
@@ -222,7 +224,7 @@ export default function BudgetsScreen() {
           <View style={styles.heroCard}>
             <View style={styles.heroTop}>
               <Text style={styles.heroLabel}>{t.totalMonthlyLimits}</Text>
-              <Text style={styles.heroBig}>{formatEur(totalBudgeted, false)}</Text>
+              <Text style={styles.heroBig}>{formatMoney(totalBudgeted, false)}</Text>
             </View>
             <View style={styles.heroBarTrack}>
               <View
@@ -245,8 +247,8 @@ export default function BudgetsScreen() {
             <Text style={styles.heroSub}>
               {totalBudgeted > 0
                 ? t.budgetHeroSummary(
-                    formatEur(totalSpentInBudgeted),
-                    formatEur(Math.abs(totalBudgeted - totalSpentInBudgeted)),
+                    formatMoney(totalSpentInBudgeted),
+                    formatMoney(Math.abs(totalBudgeted - totalSpentInBudgeted)),
                     totalSpentInBudgeted > totalBudgeted
                   )
                 : t.budgetHeroEmpty}
@@ -282,13 +284,13 @@ export default function BudgetsScreen() {
                     </Text>
                     <Text style={styles.budgetSpentText}>
                       {limit > 0
-                        ? t.spentOf(formatEur(spent), formatEur(limit, false))
-                        : t.spentOnly(formatEur(spent))}
+                        ? t.spentOf(formatMoney(spent), formatMoney(limit, false))
+                        : t.spentOnly(formatMoney(spent))}
                     </Text>
                   </View>
                   <View style={styles.limitBadge}>
                     <Text style={styles.limitBadgeText}>
-                      {limit > 0 ? formatEur(limit, false) : t.setLimit}
+                      {limit > 0 ? formatMoney(limit, false) : t.setLimit}
                     </Text>
                   </View>
                 </View>
@@ -308,8 +310,8 @@ export default function BudgetsScreen() {
                     </View>
                     <Text style={[styles.remainingNote, { color: statusColor }]}>
                       {spent <= limit
-                        ? t.leftPct(formatEur(limit - spent), Math.round(ratio * 100))
-                        : t.overBudget(formatEur(spent - limit))}
+                        ? t.leftPct(formatMoney(limit - spent), Math.round(ratio * 100))
+                        : t.overBudget(formatMoney(spent - limit))}
                     </Text>
                   </View>
                 )}
@@ -327,9 +329,9 @@ export default function BudgetsScreen() {
             <Text style={styles.heroLabel}>{t.activeRecurringTitle}</Text>
             <View style={styles.recSummaryRow}>
               <View>
-                <Text style={styles.heroBig}>{formatEur(monthlyRecurringTotal)}/mo</Text>
+                <Text style={styles.heroBig}>{formatMoney(monthlyRecurringTotal)}/mo</Text>
                 <Text style={styles.heroSub}>
-                  {t.recurringYearlySub(formatEur(monthlyRecurringTotal * 12, false))}
+                  {t.recurringYearlySub(formatMoney(monthlyRecurringTotal * 12, false))}
                 </Text>
               </View>
             </View>
@@ -369,7 +371,7 @@ export default function BudgetsScreen() {
                           : ''}
                       </Text>
                     </View>
-                    <Text style={styles.recAmount}>{formatEur(item.amount)}</Text>
+                    <Text style={styles.recAmount}>{formatMoney(item.amount)}</Text>
                   </View>
 
                   <View style={styles.recControls}>
@@ -416,7 +418,7 @@ export default function BudgetsScreen() {
                       >
                         <Ionicons name="add-circle-outline" size={15} color={Colors.white} />
                         <Text style={styles.logNowText}>
-                          {t.logNow(formatEur(item.amount))}
+                          {t.logNow(formatMoney(item.amount))}
                         </Text>
                       </Pressable>
                     )}
@@ -444,14 +446,14 @@ export default function BudgetsScreen() {
                   )
                 : ''}
             </Text>
-            <Text style={styles.modalSub}>{t.monthlyBudgetModalSub}</Text>
+            <Text style={styles.modalSub}>{t.monthlyBudgetModalSub(currency)}</Text>
             <View style={styles.euroRow}>
-              <Text style={styles.euroMark}>€</Text>
+              <Text style={styles.euroMark}>{currencyMeta.symbol}</Text>
               <TextInput
                 value={budgetInput}
                 onChangeText={setBudgetInput}
                 keyboardType="decimal-pad"
-                placeholder="300"
+                placeholder={currencyMeta.decimals === 0 ? '300000' : '300'}
                 placeholderTextColor={Colors.textMuted}
                 autoFocus
                 style={styles.modalInput}
@@ -500,12 +502,12 @@ export default function BudgetsScreen() {
 
               <View style={styles.twoCol}>
                 <View style={{ flex: 1 }}>
-                  <Text style={styles.fieldLabel}>{t.amountEur} *</Text>
+                  <Text style={styles.fieldLabel}>{t.amountLabel(currencyMeta.symbol)} *</Text>
                   <TextInput
                     value={recAmount}
                     onChangeText={setRecAmount}
                     keyboardType="decimal-pad"
-                    placeholder="850.00"
+                    placeholder={currencyMeta.decimals === 0 ? '850000' : '850.00'}
                     placeholderTextColor={Colors.textMuted}
                     style={styles.fieldInput}
                   />

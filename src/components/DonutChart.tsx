@@ -1,8 +1,8 @@
 import React from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 import Svg, { Circle, G } from 'react-native-svg';
+import { formatCurrency, type CurrencyCode } from '@/constants/currencies';
 import { Colors } from '@/theme/colors';
-import { formatEur } from '@/utils/format';
 
 export interface DonutSlice {
   key: string;
@@ -14,6 +14,7 @@ export interface DonutSlice {
 interface DonutChartProps {
   slices: DonutSlice[];
   total: number;
+  currency?: CurrencyCode;
   size?: number;
   strokeWidth?: number;
   subtitle?: string;
@@ -22,6 +23,7 @@ interface DonutChartProps {
 export function DonutChart({
   slices,
   total,
+  currency = 'EUR',
   size = 188,
   strokeWidth = 24,
   subtitle = 'Total spent',
@@ -76,7 +78,7 @@ export function DonutChart({
         <View style={styles.centerOverlay} pointerEvents="none">
           <Text style={styles.centerSubtitle}>{subtitle}</Text>
           <Text style={styles.centerTotal} numberOfLines={1} adjustsFontSizeToFit>
-            {formatEur(total, total < 10000)}
+            {formatCurrency(total, currency, total < 10000)}
           </Text>
         </View>
       </View>

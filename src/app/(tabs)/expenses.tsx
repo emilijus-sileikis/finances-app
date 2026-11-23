@@ -21,7 +21,6 @@ import { Colors } from '@/theme/colors';
 import type { CategoryId, Expense } from '@/types/finance';
 import {
   formatDisplayDate,
-  formatEur,
   formatMonthLabel,
   shiftMonthKey,
 } from '@/utils/format';
@@ -30,6 +29,8 @@ export default function ExpensesScreen() {
   const {
     language,
     t,
+    currency,
+    formatMoney,
     expenses,
     selectedMonth,
     setSelectedMonth,
@@ -92,7 +93,7 @@ export default function ExpensesScreen() {
       return;
     }
     try {
-      await exportExpensesCsv(filtered);
+      await exportExpensesCsv(filtered, currency);
     } catch {
       Alert.alert('CSV', 'Could not create CSV export file.');
     }
@@ -170,7 +171,7 @@ export default function ExpensesScreen() {
             {t.matchingItemsBanner(
               matchedLineItemsStats.count,
               search.trim(),
-              formatEur(matchedLineItemsStats.total)
+              formatMoney(matchedLineItemsStats.total)
             )}
           </Text>
         </View>
@@ -224,7 +225,7 @@ export default function ExpensesScreen() {
       {/* Summary Strip */}
       <View style={styles.summaryRow}>
         <Text style={styles.summaryCount}>{t.txCount(filtered.length)}</Text>
-        <Text style={styles.summaryTotal}>{formatEur(filteredTotal)}</Text>
+        <Text style={styles.summaryTotal}>{formatMoney(filteredTotal)}</Text>
       </View>
 
       <FlatList
@@ -305,11 +306,11 @@ export default function ExpensesScreen() {
                       </Pressable>
                     )}
                     {item.taxAmount > 0 && (
-                      <Text style={styles.taxTag}>PVM/VAT {formatEur(item.taxAmount)}</Text>
+                      <Text style={styles.taxTag}>PVM/VAT {formatMoney(item.taxAmount)}</Text>
                     )}
                   </View>
                 </View>
-                <Text style={styles.rowAmount}>-{formatEur(item.amount)}</Text>
+                <Text style={styles.rowAmount}>-{formatMoney(item.amount)}</Text>
               </Pressable>
 
               {/* Inline expandable itemized receipt breakdown */}
@@ -351,7 +352,7 @@ export default function ExpensesScreen() {
                             isDiscount && { color: Colors.primary },
                           ]}
                         >
-                          {formatEur(lineItem.price)}
+                          {formatMoney(lineItem.price)}
                         </Text>
                       </View>
                     );

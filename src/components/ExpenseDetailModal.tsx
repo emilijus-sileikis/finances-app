@@ -18,6 +18,7 @@ import {
   type EditableReceiptItem,
 } from '@/components/ReceiptItemsEditor';
 import { CATEGORIES } from '@/constants/categories';
+import { formatEditableAmount } from '@/constants/currencies';
 import { useFinances } from '@/db/FinanceContext';
 import { getCategoryLabel } from '@/i18n/translations';
 import { isPdfUri, openPdfReceipt } from '@/services/receiptStorage';
@@ -68,19 +69,21 @@ function ExpenseDetailForm({
   onSave,
   onDelete,
 }: ExpenseDetailFormProps) {
-  const { language, t } = useFinances();
+  const { language, t, currency, currencyMeta } = useFinances();
 
   const [title, setTitle] = useState(expense.title);
   const [merchant, setMerchant] = useState(expense.merchant);
-  const [amountText, setAmountText] = useState(expense.amount.toFixed(2));
-  const [taxText, setTaxText] = useState(
-    expense.taxAmount > 0 ? expense.taxAmount.toFixed(2) : ''
+  const [amountText, setAmountText] = useState(() =>
+    formatEditableAmount(expense.amount, currency)
+  );
+  const [taxText, setTaxText] = useState(() =>
+    expense.taxAmount > 0 ? formatEditableAmount(expense.taxAmount, currency) : ''
   );
   const [date, setDate] = useState(expense.date);
   const [category, setCategory] = useState<CategoryId>(expense.category);
   const [notes, setNotes] = useState(expense.notes);
   const [draftItems, setDraftItems] = useState<EditableReceiptItem[]>(() =>
-    toEditableItems(expense.items)
+    toEditableItems(expense.items, currency)
   );
   const [showFullReceipt, setShowFullReceipt] = useState(false);
 
@@ -170,7 +173,7 @@ function ExpenseDetailForm({
 
         <View style={styles.row}>
           <View style={{ flex: 1 }}>
-            <Text style={styles.label}>{t.amountEur}</Text>
+            <Text style={styles.label}>{t.amountLabel(currencyMeta.symbol)}</Text>
             <TextInput
               value={amountText}
               onChangeText={setAmountText}
@@ -180,12 +183,12 @@ function ExpenseDetailForm({
             />
           </View>
           <View style={{ flex: 1 }}>
-            <Text style={styles.label}>{t.taxVatLabel}</Text>
+            <Text style={styles.label}>{t.taxVatLabel(currencyMeta.symbol)}</Text>
             <TextInput
               value={taxText}
               onChangeText={setTaxText}
               keyboardType="decimal-pad"
-              placeholder="0.00"
+              placeholder={currencyMeta.decimals === 0 ? '0' : '0.00'}
               style={styles.input}
               placeholderTextColor={Colors.textMuted}
             />
@@ -255,7 +258,7 @@ function ExpenseDetailForm({
           items={draftItems}
           onChange={setDraftItems}
           receiptTotal={currentTotal}
-          onApplyItemsSum={(sum) => setAmountText(sum.toFixed(2))}
+          onApplyItemsSum={(sum) => setAmountText(formatEditableAmount(sum, currency))}
         />
 
         <Text style={styles.label}>{t.notesLabel}</Text>

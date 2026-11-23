@@ -1,14 +1,12 @@
+import { formatCurrency, type CurrencyCode } from '@/constants/currencies';
 import type { Language } from '@/i18n/translations';
 
 export function formatEur(amount: number, showDecimals = true): string {
-  const safe = Number.isFinite(amount) ? amount : 0;
-  const abs = Math.abs(safe);
-  const formatted = abs.toLocaleString('en-IE', {
-    minimumFractionDigits: showDecimals ? 2 : 0,
-    maximumFractionDigits: showDecimals ? 2 : 0,
-  });
-  return `${safe < 0 ? '-' : ''}€${formatted}`;
+  return formatCurrency(amount, 'EUR', showDecimals);
 }
+
+export { formatCurrency };
+export type { CurrencyCode };
 
 export function getTodayIso(): string {
   const now = new Date();
@@ -158,8 +156,8 @@ export function parseFlexibleAmount(input: string, allowNegative = false): numbe
 
   const cleaned = trimmed
     .replace(/^[−-]/, '')
-    .replace(/[€$\s]/g, '')
-    .replace(/EUR/gi, '')
+    .replace(/(?:EUR|KRW|USD|GBP|JPY|PLN|zł)/gi, '')
+    .replace(/[€$₩£¥원\s]/g, '')
     .trim();
   if (!cleaned) return null;
 

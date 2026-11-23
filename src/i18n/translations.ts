@@ -47,7 +47,7 @@ const EN = {
 
   // Overview
   appTitle: 'Finances',
-  appSub: '100% Offline • EUR',
+  appSub: (code: string) => `100% Offline • ${code}`,
   swipeHint: 'Swipe left / right to switch months',
   autoLoggedOne: 'Auto-logged 1 recurring expense for this period.',
   autoLoggedMany: (n: number) => `Auto-logged ${n} recurring expenses for this period.`,
@@ -56,7 +56,7 @@ const EN = {
   logBtn: (amt: string) => `Log ${amt}`,
   emptyTitle: 'Track receipts without banks or logins',
   emptyDesc:
-    'Snap a receipt photo, upload a PDF invoice, or paste a screenshot/tax notice to auto-sort your EUR spending with local savings tips.',
+    'Snap a receipt photo, upload a PDF invoice, or paste a screenshot/tax notice to auto-sort your spending with local savings tips.',
   scanOrAddBtn: 'Scan or Add Receipt',
   vsLastMonth: 'vs Last Month',
   budgetLeft: 'Budget Left',
@@ -97,8 +97,8 @@ const EN = {
   showRawText: 'Paste or edit raw receipt text',
   rawPlaceholder: 'Paste receipt, invoice, or tax SMS/email text here...',
   autoParseBtn: 'Auto-Parse Amount & Category',
-  totalAmountLabel: 'Total Amount (€) *',
-  taxVatLabel: 'Tax / VAT (€)',
+  totalAmountLabel: (sym: string) => `Total Amount (${sym}) *`,
+  taxVatLabel: (sym: string) => `Tax / VAT (${sym})`,
   merchantLabel: 'Store / Merchant',
   merchantPlaceholder: 'e.g. Rimi, Lidl, Steam, VMI',
   titleOptionalLabel: 'Title (optional)',
@@ -127,7 +127,7 @@ const EN = {
   alertPdfFailTitle: 'PDF import failed',
   alertPdfFailBody: 'Could not read that PDF file.',
   alertAmountTitle: 'Enter an amount',
-  alertAmountBody: 'Please enter a valid expense amount in EUR.',
+  alertAmountBody: 'Please enter a valid expense amount greater than 0.',
   alertSavedTitle: 'Saved!',
   alertSavedBody: (title: string, amt: string, cat: string) =>
     `${title} (${amt}) added to ${cat}.`,
@@ -166,7 +166,7 @@ const EN = {
   tapToShrink: 'Tap to shrink receipt',
   tapToExpand: 'Tap to expand receipt image',
   openPdfReceipt: 'Open PDF Receipt',
-  amountEur: 'Amount (€)',
+  amountLabel: (sym: string) => `Amount (${sym})`,
   titleLabel: 'Title',
   dateIsoLabel: 'Date (YYYY-MM-DD)',
   categoryLearnedLabel: 'Category (auto-learned for this merchant)',
@@ -186,7 +186,7 @@ const EN = {
   totalMonthlyLimits: 'Total Monthly Limits',
   budgetHeroSummary: (spent: string, diff: string, over: boolean) =>
     `${spent} spent across budgeted categories • ${diff} ${over ? 'over' : 'remaining'}`,
-  budgetHeroEmpty: 'Tap any category below to set a monthly EUR budget limit.',
+  budgetHeroEmpty: 'Tap any category below to set a monthly budget limit.',
   spentOf: (spent: string, limit: string) => `Spent ${spent} of ${limit}`,
   spentOnly: (spent: string) => `Spent ${spent}`,
   setLimit: 'Set Limit',
@@ -205,8 +205,8 @@ const EN = {
   loggedFor: (period: string) => `Logged for ${period}`,
   logNow: (amt: string) => `Log Now (${amt})`,
   monthlyBudgetModalTitle: (cat: string) => `${cat} Monthly Budget`,
-  monthlyBudgetModalSub:
-    'Enter your monthly EUR cap (or leave blank / 0 to remove the limit).',
+  monthlyBudgetModalSub: (code: string) =>
+    `Enter your monthly ${code} cap (or leave blank / 0 to remove the limit).`,
   saveLimit: 'Save Limit',
   newRecurringTitle: 'New Recurring Expense',
   dayOfMonthLabel: 'Day of Month (1-28)',
@@ -243,6 +243,8 @@ const EN = {
   thisMonthTaxes: 'This Month Taxes/VAT',
   ytdTaxes: (year: string) => `${year} Year-to-Date`,
   languageSectionTitle: 'Language / Kalba',
+  currencySectionTitle: 'Currency / Valiuta',
+  currencyNote: 'Changes the displayed currency symbol, decimals (0 for KRW/JPY), and receipt scanner.',
   localDataTitle: 'Local Data & Backups (No Cloud)',
   localDataNote:
     'All receipts and numbers stay 100% on your phone. Export anytime to keep a copy.',
@@ -267,7 +269,7 @@ const LT: TranslationSet = {
 
   // Overview
   appTitle: 'Finansai',
-  appSub: '100% neprisijungus • EUR',
+  appSub: (code: string) => `100% neprisijungus • ${code}`,
   swipeHint: 'Braukite kairėn / dešinėn, kad pakeistumėte mėnesį',
   autoLoggedOne: 'Automatiškai pridėta 1 pasikartojanti išlaida.',
   autoLoggedMany: (n: number) => `Automatiškai pridėtos ${n} pasikartojančios išlaidos.`,
@@ -317,8 +319,8 @@ const LT: TranslationSet = {
   showRawText: 'Įklijuoti arba redaguoti čekio tekstą',
   rawPlaceholder: 'Įklijuokite čekio, sąskaitos ar mokesčių SMS/el. laiško tekstą...',
   autoParseBtn: 'Automatiškai atpažinti sumą ir kategoriją',
-  totalAmountLabel: 'Bendra suma (€) *',
-  taxVatLabel: 'Mokesčiai / PVM (€)',
+  totalAmountLabel: (sym: string) => `Bendra suma (${sym}) *`,
+  taxVatLabel: (sym: string) => `Mokesčiai / PVM (${sym})`,
   merchantLabel: 'Parduotuvė / Gavėjas',
   merchantPlaceholder: 'pvz., Rimi, Lidl, Steam, VMI',
   titleOptionalLabel: 'Pavadinimas (nebūtina)',
@@ -347,7 +349,7 @@ const LT: TranslationSet = {
   alertPdfFailTitle: 'Nepavyko įkelti PDF',
   alertPdfFailBody: 'Nepavyko perskaityti pasirinkto PDF failo.',
   alertAmountTitle: 'Įveskite sumą',
-  alertAmountBody: 'Įveskite teisingą išlaidos sumą eurais.',
+  alertAmountBody: 'Įveskite teisingą išlaidos sumą, didesnę už 0.',
   alertSavedTitle: 'Išsaugota!',
   alertSavedBody: (title: string, amt: string, cat: string) =>
     `${title} (${amt}) pridėta į „${cat}“.`,
@@ -386,7 +388,7 @@ const LT: TranslationSet = {
   tapToShrink: 'Paspauskite, kad sumažintumėte',
   tapToExpand: 'Paspauskite, kad padidintumėte čekį',
   openPdfReceipt: 'Atidaryti PDF čekį',
-  amountEur: 'Suma (€)',
+  amountLabel: (sym: string) => `Suma (${sym})`,
   titleLabel: 'Pavadinimas',
   dateIsoLabel: 'Data (MMMM-MM-DD)',
   categoryLearnedLabel: 'Kategorija (išmokstama šiai parduotuvei)',
@@ -424,8 +426,8 @@ const LT: TranslationSet = {
   loggedFor: (period: string) => `Įrašyta už ${period}`,
   logNow: (amt: string) => `Įrašyti dabar (${amt})`,
   monthlyBudgetModalTitle: (cat: string) => `${cat} – mėnesio limitas`,
-  monthlyBudgetModalSub:
-    'Įveskite mėnesio limitą eurais (palikite tuščią arba 0, kad panaikintumėte).',
+  monthlyBudgetModalSub: (code: string) =>
+    `Įveskite mėnesio limitą (${code}) – palikite tuščią arba 0, kad panaikintumėte.`,
   saveLimit: 'Išsaugoti limitą',
   newRecurringTitle: 'Nauja pastovi išlaida',
   dayOfMonthLabel: 'Mėnesio diena (1–28)',
@@ -462,6 +464,8 @@ const LT: TranslationSet = {
   thisMonthTaxes: 'Šio mėn. mokesčiai / PVM',
   ytdTaxes: (year: string) => `${year} m. iš viso`,
   languageSectionTitle: 'Kalba / Language',
+  currencySectionTitle: 'Valiuta / Currency',
+  currencyNote: 'Keičia rodomą valiutos ženklą, dešimtaines (0 KRW/JPY) ir čekių atpažinimą.',
   localDataTitle: 'Duomenys telefone ir kopijos',
   localDataNote:
     'Visi čekiai ir skaičiai saugomi 100% jūsų telefone. Bet kada galite pasidaryti atsarginę kopiją.',

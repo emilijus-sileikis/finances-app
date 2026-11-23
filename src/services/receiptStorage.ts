@@ -1,5 +1,6 @@
 import { Directory, File, Paths } from 'expo-file-system';
 import * as Sharing from 'expo-sharing';
+import { getCurrencyMeta, type CurrencyCode } from '@/constants/currencies';
 import type { CategoryBudget, Expense, RecurringExpense } from '@/types/finance';
 
 function getReceiptsDir(): Directory {
@@ -109,8 +110,12 @@ export function deleteReceiptFile(uri: string | null): void {
   }
 }
 
-export async function exportExpensesCsv(expenses: Expense[]): Promise<boolean> {
-  const header = 'Date,Title,Merchant,Category,Amount_EUR,Tax_EUR,Notes';
+export async function exportExpensesCsv(
+  expenses: Expense[],
+  currency: CurrencyCode = 'EUR'
+): Promise<boolean> {
+  const meta = getCurrencyMeta(currency);
+  const header = `Date,Title,Merchant,Category,Amount_${meta.code},Tax_${meta.code},Notes`;
   const escapeCsv = (val: string) => {
     const safe = /^[=+\-@\t\r]/.test(val) ? `'${val}` : val;
     return `"${safe.replace(/"/g, '""')}"`;
@@ -122,8 +127,8 @@ export async function exportExpensesCsv(expenses: Expense[]): Promise<boolean> {
       escapeCsv(e.title),
       escapeCsv(e.merchant),
       e.category,
-      e.amount.toFixed(2),
-      e.taxAmount.toFixed(2),
+      e.amount.toFixed(meta.decimals),
+      e.taxAmount.toFixed(meta.decimals),
       escapeCsv(e.notes),
     ].join(',')
   );
@@ -143,6 +148,7 @@ export async function exportExpensesCsv(expenses: Expense[]): Promise<boolean> {
 }
 
 export async function exportFullBackupJson(payload: {
+  currency: CurrencyCode;
   expenses: Expense[];
   budgets: CategoryBudget[];
   recurring: RecurringExpense[];
@@ -150,7 +156,6 @@ export async function exportFullBackupJson(payload: {
   const json = JSON.stringify(
     {
       exportedAt: new Date().toISOString(),
-      currency: 'EUR',
       ...payload,
     },
     null,

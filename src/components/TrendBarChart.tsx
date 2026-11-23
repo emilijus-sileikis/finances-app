@@ -1,9 +1,14 @@
 import React from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 import Svg, { Rect, Text as SvgText } from 'react-native-svg';
+import {
+  formatCurrency,
+  getCurrencyMeta,
+  type CurrencyCode,
+} from '@/constants/currencies';
 import type { Language } from '@/i18n/translations';
 import { Colors } from '@/theme/colors';
-import { formatEur, formatShortMonth } from '@/utils/format';
+import { formatShortMonth } from '@/utils/format';
 
 interface TrendPoint {
   monthKey: string;
@@ -14,6 +19,7 @@ interface TrendBarChartProps {
   data: TrendPoint[];
   selectedMonth: string;
   language?: Language;
+  currency?: CurrencyCode;
   emptyLabel?: string;
 }
 
@@ -21,9 +27,11 @@ export function TrendBarChart({
   data,
   selectedMonth,
   language = 'en',
+  currency = 'EUR',
   emptyLabel = 'Add expenses to see your 6-month trend',
 }: TrendBarChartProps) {
-  const maxVal = Math.max(100, ...data.map((d) => d.total));
+  const scale = getCurrencyMeta(currency).eurRateApprox;
+  const maxVal = Math.max(100 * scale, ...data.map((d) => d.total));
   const chartHeight = 148;
   const barAreaHeight = 104;
   const chartWidth = 320;
@@ -51,7 +59,7 @@ export function TrendBarChart({
                   fontWeight={isSelected ? '700' : '500'}
                   textAnchor="middle"
                 >
-                  {formatEur(point.total, false)}
+                  {formatCurrency(point.total, currency, false)}
                 </SvgText>
               )}
               <Rect

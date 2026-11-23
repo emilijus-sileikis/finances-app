@@ -22,7 +22,6 @@ import { Colors } from '@/theme/colors';
 import type { CategoryId, Expense } from '@/types/finance';
 import {
   formatDisplayDate,
-  formatEur,
   formatMonthLabel,
   getCurrentMonthKey,
   getDaysInMonth,
@@ -35,6 +34,8 @@ export default function OverviewScreen() {
     language,
     t,
     setLanguage,
+    currency,
+    formatMoney,
     expenses,
     budgets,
     selectedMonth,
@@ -167,7 +168,7 @@ export default function OverviewScreen() {
         <View style={styles.topRow}>
           <View>
             <Text style={styles.appTitle}>{t.appTitle}</Text>
-            <Text style={styles.appSub}>{t.appSub}</Text>
+            <Text style={styles.appSub}>{t.appSub(currency)}</Text>
           </View>
           <View style={styles.langPill}>
             <Pressable
@@ -234,7 +235,7 @@ export default function OverviewScreen() {
                 <View style={{ flex: 1 }}>
                   <Text style={styles.dueItemTitle}>{item.title}</Text>
                   <Text style={styles.dueItemSub}>
-                    {getCategoryLabel(item.category, language)} • {formatEur(item.amount)}
+                    {getCategoryLabel(item.category, language)} • {formatMoney(item.amount)}
                   </Text>
                 </View>
                 <Pressable
@@ -242,7 +243,7 @@ export default function OverviewScreen() {
                   style={styles.dueLogBtn}
                 >
                   <Text style={styles.dueLogBtnText}>
-                    {t.logBtn(formatEur(item.amount))}
+                    {t.logBtn(formatMoney(item.amount))}
                   </Text>
                 </Pressable>
               </View>
@@ -275,6 +276,7 @@ export default function OverviewScreen() {
               <DonutChart
                 slices={donutSlices}
                 total={totalSpent}
+                currency={currency}
                 subtitle={formatMonthLabel(selectedMonth, language).split(' ')[0]}
               />
 
@@ -291,7 +293,7 @@ export default function OverviewScreen() {
                     ]}
                   >
                     {prevMonthSpent > 0
-                      ? `${totalSpent >= prevMonthSpent ? '+' : '-'}${formatEur(
+                      ? `${totalSpent >= prevMonthSpent ? '+' : '-'}${formatMoney(
                           Math.abs(totalSpent - prevMonthSpent),
                           false
                         )}`
@@ -314,7 +316,7 @@ export default function OverviewScreen() {
                     ]}
                   >
                     {budgetRemaining !== null
-                      ? formatEur(budgetRemaining, false)
+                      ? formatMoney(budgetRemaining, false)
                       : String(monthExpenses.length)}
                   </Text>
                 </View>
@@ -323,7 +325,7 @@ export default function OverviewScreen() {
 
                 <View style={styles.kpiBox}>
                   <Text style={styles.kpiLabel}>{t.taxesAndVat}</Text>
-                  <Text style={styles.kpiValue}>{formatEur(totalTaxes, false)}</Text>
+                  <Text style={styles.kpiValue}>{formatMoney(totalTaxes, false)}</Text>
                 </View>
               </View>
 
@@ -331,7 +333,7 @@ export default function OverviewScreen() {
                 <View style={styles.dailyPill}>
                   <Ionicons name="shield-checkmark-outline" size={15} color={Colors.primary} />
                   <Text style={styles.dailyPillText}>
-                    {t.safeDailyBudget(formatEur(safeDailySpend), daysLeft)}
+                    {t.safeDailyBudget(formatMoney(safeDailySpend), daysLeft)}
                   </Text>
                 </View>
               )}
@@ -407,11 +409,11 @@ export default function OverviewScreen() {
                             </View>
                             <View style={styles.catRightWrap}>
                               <Text style={styles.catAmount}>
-                                {formatEur(item.total)}
+                                {formatMoney(item.total)}
                                 {item.budget ? (
                                   <Text style={styles.catBudgetSub}>
                                     {' '}
-                                    / {formatEur(item.budget, false)}
+                                    / {formatMoney(item.budget, false)}
                                   </Text>
                                 ) : (
                                   <Text style={styles.catBudgetSub}> ({pct}%)</Text>
@@ -497,7 +499,7 @@ export default function OverviewScreen() {
                                   </View>
                                 </View>
                                 <Text style={styles.expandedAmount}>
-                                  {formatEur(exp.amount)}
+                                  {formatMoney(exp.amount)}
                                 </Text>
                                 <Ionicons
                                   name="chevron-forward"
@@ -554,7 +556,7 @@ export default function OverviewScreen() {
                             : ''}
                         </Text>
                       </View>
-                      <Text style={styles.txAmount}>-{formatEur(exp.amount)}</Text>
+                      <Text style={styles.txAmount}>-{formatMoney(exp.amount)}</Text>
                     </Pressable>
                   );
                 })

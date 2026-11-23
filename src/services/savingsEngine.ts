@@ -1,4 +1,9 @@
 import { CATEGORIES, getCategoryMeta } from '@/constants/categories';
+import {
+  formatCurrency,
+  getCurrencyMeta,
+  type CurrencyCode,
+} from '@/constants/currencies';
 import { getCategoryLabel, type Language } from '@/i18n/translations';
 import type {
   CategoryBudget,
@@ -8,7 +13,6 @@ import type {
   SavingsTip,
 } from '@/types/finance';
 import {
-  formatEur,
   getCurrentMonthKey,
   getDaysInMonth,
   shiftMonthKey,
@@ -89,9 +93,14 @@ export function generateSavingsTips(
   budgets: CategoryBudget[],
   recurring: RecurringExpense[],
   monthKey: string,
-  lang: Language = 'en'
+  lang: Language = 'en',
+  currency: CurrencyCode = 'EUR'
 ): SavingsTip[] {
   const isLt = lang === 'lt';
+  const curMeta = getCurrencyMeta(currency);
+  const scale = curMeta.eurRateApprox;
+  const fmt = (val: number, decimals?: boolean) => formatCurrency(val, currency, decimals);
+
   const tips: SavingsTip[] = [];
   const monthExpenses = getMonthExpenses(allExpenses, monthKey);
   const prevMonthKey = shiftMonthKey(monthKey, -1);
@@ -136,16 +145,16 @@ export function generateSavingsTips(
         severity: 'high',
         category: item.category,
         title: isLt
-          ? `„${label}“ viršijo biudžetą ${formatEur(over)}`
-          : `${label} is ${formatEur(over)} over budget`,
+          ? `„${label}“ viršijo biudžetą ${fmt(over)}`
+          : `${label} is ${fmt(over)} over budget`,
         body: isLt
-          ? `Išleidote ${formatEur(item.total)} (limitas ${formatEur(item.budget)}). Sustabdžius nebūtinas šios kategorijos išlaidas likusį mėnesį, išvengsite ${formatEur(over * 12)}/metus pertekliaus.`
-          : `You spent ${formatEur(item.total)} against your ${formatEur(item.budget)} limit. Pausing non-essential ${label.toLowerCase()} purchases for the rest of the month prevents a ${formatEur(over * 12)}/year leak.`,
+          ? `Išleidote ${fmt(item.total)} (limitas ${fmt(item.budget)}). Sustabdžius nebūtinas šios kategorijos išlaidas likusį mėnesį, išvengsite ${fmt(over * 12, false)}/metus pertekliaus.`
+          : `You spent ${fmt(item.total)} against your ${fmt(item.budget)} limit. Pausing non-essential ${label.toLowerCase()} purchases for the rest of the month prevents a ${fmt(over * 12, false)}/year leak.`,
         potentialMonthlySavings: over,
       });
     } else if (isCurrentMonth && monthProgress >= 0.25 && monthProgress < 0.92) {
       const projected = item.total / monthProgress;
-      if (projected > item.budget * 1.15 && projected - item.budget >= 15) {
+      if (projected > item.budget * 1.15 && projected - item.budget >= 15 * scale) {
         const projectedOver = projected - item.budget;
         const remaining = Math.max(0, item.budget - item.total);
         const daysLeft = Math.max(1, daysInMonth - dayOfMonth);
@@ -157,8 +166,8 @@ export function generateSavingsTips(
             ? `„${label}“ artėja prie biudžeto viršijimo`
             : `${label} is pacing over budget`,
           body: isLt
-            ? `Šiuo tempu mėnesio pabaigoje išleisite ~${formatEur(projected)}. Likusias ${daysLeft} d. neišleiskite daugiau nei ${formatEur(remaining / daysLeft)}/d., kad tilptumėte į limitą.`
-            : `At this rate you'll hit ~${formatEur(projected)} this month. Keep ${label.toLowerCase()} under ${formatEur(remaining / daysLeft)}/day for the remaining ${daysLeft} days to stay on target.`,
+            ? `Šiuo tempu mėnesio pabaigoje išleisite ~${fmt(projected, false)}. Likusias ${daysLeft} d. neišleiskite daugiau nei ${fmt(remaining / daysLeft)}/d., kad tilptumėte į limitą.`
+            : `At this rate you'll hit ~${fmt(projected, false)} this month. Keep ${label.toLowerCase()} under ${fmt(remaining / daysLeft)}/day for the remaining ${daysLeft} days to stay on target.`,
           potentialMonthlySavings: projectedOver,
         });
       }
@@ -169,7 +178,7 @@ export function generateSavingsTips(
   for (const item of catTotals) {
     if (item.category === 'mortgage' || item.category === 'taxes') continue;
     const prev = prevCatMap.get(item.category) ?? 0;
-    if (prev >= 20 && item.total > prev * 1.3 && item.total - prev >= 20) {
+    if (prev >= 20 * scale && item.total > prev * 1.3 && item.total - prev >= 20 * scale) {
       const diff = item.total - prev;
       const pct = Math.round(((item.total - prev) / prev) * 100);
       const label = getCategoryLabel(item.category, lang);
@@ -181,8 +190,8 @@ export function generateSavingsTips(
           ? `„${label}“ išaugo +${pct}% palyginti su praeitu mėn.`
           : `${label} jumped +${pct}% vs last month`,
         body: isLt
-          ? `Išleidote ${formatEur(diff)} daugiau nei praeitą mėnesį (${formatEur(prev)}). Grįžus prie praeito mėnesio lygio sutaupytumėte ${formatEur(diff)}/mėn. (${formatEur(diff * 12)}/metus).`
-          : `Up ${formatEur(diff)} from ${formatEur(prev)} last month. Returning to last month's level saves ${formatEur(diff)}/mo (${formatEur(diff * 12)}/yr).`,
+          ? `Išleidote ${fmt(diff)} daugiau nei praeitą mėnesį (${fmt(prev)}). Grįžus prie praeito mėnesio lygio sutaupytumėte ${fmt(diff)}/mėn. (${fmt(diff * 12, false)}/metus).`
+          : `Up ${fmt(diff)} from ${fmt(prev)} last month. Returning to last month's level saves ${fmt(diff)}/mo (${fmt(diff * 12, false)}/yr).`,
         potentialMonthlySavings: diff,
       });
     }
@@ -191,7 +200,7 @@ export function generateSavingsTips(
   // 3. Discretionary share analysis
   const discretionaryTotal = computeDiscretionaryTotal(monthExpenses);
   const discretionaryShare = discretionaryTotal / totalSpent;
-  if (discretionaryTotal >= 60 && discretionaryShare >= 0.22) {
+  if (discretionaryTotal >= 60 * scale && discretionaryShare >= 0.22) {
     const trim20 = discretionaryTotal * 0.2;
     const topDisc = catTotals
       .filter((c) => getCategoryMeta(c.category).isDiscretionary)
@@ -205,28 +214,29 @@ export function generateSavingsTips(
         ? `Nebūtinos išlaidos sudaro ${Math.round(discretionaryShare * 100)}% visų išlaidų`
         : `Discretionary spending is ${Math.round(discretionaryShare * 100)}% of your total`,
       body: isLt
-        ? `Pramogoms ir norams (${topDisc || 'laisvalaikiui'}) išleidote ${formatEur(discretionaryTotal)}. Sumažinus jas 20%, sutaupysite ${formatEur(trim20)}/mėn. — net ${formatEur(trim20 * 12)} per metus.`
-        : `You spent ${formatEur(discretionaryTotal)} on wants (led by ${topDisc || 'leisure'}). Trimming these by 20% saves ${formatEur(trim20)}/mo — that's ${formatEur(trim20 * 12)} extra in a year.`,
+        ? `Pramogoms ir norams (${topDisc || 'laisvalaikiui'}) išleidote ${fmt(discretionaryTotal)}. Sumažinus jas 20%, sutaupysite ${fmt(trim20)}/mėn. — net ${fmt(trim20 * 12, false)} per metus.`
+        : `You spent ${fmt(discretionaryTotal)} on wants (led by ${topDisc || 'leisure'}). Trimming these by 20% saves ${fmt(trim20)}/mo — that's ${fmt(trim20 * 12, false)} extra in a year.`,
       potentialMonthlySavings: trim20,
     });
   }
 
   // 4. Small impulse purchases
+  const smallCap = Math.round(18 * scale);
   const smallDiscretionary = monthExpenses.filter(
-    (e) => e.amount <= 18 && getCategoryMeta(e.category).isDiscretionary
+    (e) => e.amount <= smallCap && getCategoryMeta(e.category).isDiscretionary
   );
   const smallSum = smallDiscretionary.reduce((s, e) => s + Number(e.amount), 0);
-  if (smallDiscretionary.length >= 4 && smallSum >= 35) {
+  if (smallDiscretionary.length >= 4 && smallSum >= 35 * scale) {
     const half = smallSum * 0.5;
     tips.push({
       id: 'small-leaks',
       severity: 'medium',
       title: isLt
-        ? `${smallDiscretionary.length} smulkūs pirkiniai susidėjo į ${formatEur(smallSum)}`
-        : `${smallDiscretionary.length} small impulse purchases added up to ${formatEur(smallSum)}`,
+        ? `${smallDiscretionary.length} smulkūs pirkiniai susidėjo į ${fmt(smallSum)}`
+        : `${smallDiscretionary.length} small impulse purchases added up to ${fmt(smallSum)}`,
       body: isLt
-        ? `Pirkiniai iki €18 atrodo menki, bet atsisakius bent pusės jų sutaupysite ${formatEur(half)}/mėn. (${formatEur(half * 12)}/metus).`
-        : `Purchases under €18 feel tiny individually, yet cutting just half of them puts ${formatEur(half)}/mo (${formatEur(half * 12)}/yr) straight into savings.`,
+        ? `Pirkiniai iki ${fmt(smallCap, false)} atrodo menki, bet atsisakius bent pusės jų sutaupysite ${fmt(half)}/mėn. (${fmt(half * 12, false)}/metus).`
+        : `Purchases under ${fmt(smallCap, false)} feel tiny individually, yet cutting just half of them puts ${fmt(half)}/mo (${fmt(half * 12, false)}/yr) straight into savings.`,
       potentialMonthlySavings: half,
     });
   }
@@ -240,7 +250,7 @@ export function generateSavingsTips(
     if (r.frequency === 'yearly') return sum + r.amount / 12;
     return sum + r.amount;
   }, 0);
-  if (optionalRecurringMonthly >= 15) {
+  if (optionalRecurringMonthly >= 15 * scale) {
     tips.push({
       id: 'recurring-audit',
       severity: 'medium',
@@ -248,29 +258,30 @@ export function generateSavingsTips(
         ? `Peržiūrėkite ${optionalRecurring.length} pasikartojančias prenumeratas`
         : `Review ${optionalRecurring.length} discretionary recurring bill${optionalRecurring.length > 1 ? 's' : ''}`,
       body: isLt
-        ? `Nebūtinos prenumeratos kainuoja ~${formatEur(optionalRecurringMonthly)}/mėn. (${formatEur(optionalRecurringMonthly * 12)}/metus). Atsisakius bent vienos nenaudojamos paslaugos, sutaupysite be pastangų.`
-        : `Your optional subscriptions/recurring items cost ~${formatEur(optionalRecurringMonthly)}/mo (${formatEur(optionalRecurringMonthly * 12)}/yr). Pausing even one unused service yields effortless monthly savings.`,
+        ? `Nebūtinos prenumeratos kainuoja ~${fmt(optionalRecurringMonthly)}/mėn. (${fmt(optionalRecurringMonthly * 12, false)}/metus). Atsisakius bent vienos nenaudojamos paslaugos, sutaupysite be pastangų.`
+        : `Your optional subscriptions/recurring items cost ~${fmt(optionalRecurringMonthly)}/mo (${fmt(optionalRecurringMonthly * 12, false)}/yr). Pausing even one unused service yields effortless monthly savings.`,
       potentialMonthlySavings: optionalRecurringMonthly * 0.35,
     });
   }
 
   // 6. Missing budget suggestion
   const unbudgetedTop = catTotals.find(
-    (c) => c.budget === null && c.total >= 50 && c.category !== 'other'
+    (c) => c.budget === null && c.total >= 50 * scale && c.category !== 'other'
   );
   if (unbudgetedTop) {
     const label = getCategoryLabel(unbudgetedTop.category, lang);
-    const suggestedCap = Math.ceil((unbudgetedTop.total * 0.9) / 10) * 10;
+    const step = curMeta.decimals === 0 ? Math.max(1000, Math.round(10 * scale)) : 10;
+    const suggestedCap = Math.ceil((unbudgetedTop.total * 0.9) / step) * step;
     tips.push({
       id: `set-budget-${unbudgetedTop.category}`,
       severity: 'good',
       category: unbudgetedTop.category,
       title: isLt
-        ? `Nustatykite ${formatEur(suggestedCap, false)} limitą kategorijai „${label}“`
-        : `Set a ${formatEur(suggestedCap, false)} cap on ${label}`,
+        ? `Nustatykite ${fmt(suggestedCap, false)} limitą kategorijai „${label}“`
+        : `Set a ${fmt(suggestedCap, false)} cap on ${label}`,
       body: isLt
-        ? `„${label}“ yra viena didžiausių jūsų išlaidų (${formatEur(unbudgetedTop.total)}) be mėnesio biudžeto. Nustačius ribą lengviau pastebėti perteklinį išlaidavimą.`
-        : `${label} is one of your top categories (${formatEur(unbudgetedTop.total)}) without a monthly budget. Adding a target limit helps trigger early alerts before overspending.`,
+        ? `„${label}“ yra viena didžiausių jūsų išlaidų (${fmt(unbudgetedTop.total)}) be mėnesio biudžeto. Nustačius ribą lengviau pastebėti perteklinį išlaidavimą.`
+        : `${label} is one of your top categories (${fmt(unbudgetedTop.total)}) without a monthly budget. Adding a target limit helps trigger early alerts before overspending.`,
     });
   }
 
@@ -282,8 +293,8 @@ export function generateSavingsTips(
       severity: 'good',
       title: isLt ? 'Išlaidos puikiai kontroliuojamos!' : 'Spending looks well controlled!',
       body: isLt
-        ? `Šį mėnesį tilpote į limitus (${formatEur(totalSpent)}). Pabandykite 10% (${formatEur(totalSpent * 0.1)}) atidėti į taupymo tikslą.`
-        : `You're staying within your limits at ${formatEur(totalSpent)} this month. Consider setting aside 10% (${formatEur(totalSpent * 0.1)}) into a dedicated savings goal.`,
+        ? `Šį mėnesį tilpote į limitus (${fmt(totalSpent)}). Pabandykite 10% (${fmt(totalSpent * 0.1)}) atidėti į taupymo tikslą.`
+        : `You're staying within your limits at ${fmt(totalSpent)} this month. Consider setting aside 10% (${fmt(totalSpent * 0.1)}) into a dedicated savings goal.`,
     });
   }
 
