@@ -118,6 +118,7 @@ export function ReceiptItemsEditor({
                   onChangeText={(val) => handleUpdate(item.key, 'name', val)}
                   placeholder={t.itemNamePlaceholder}
                   placeholderTextColor={Colors.textMuted}
+                  multiline
                   style={styles.nameInput}
                 />
                 <TextInput
