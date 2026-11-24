@@ -9,11 +9,14 @@ import type {
   NewExpenseItemInput,
   NewQuickPresetInput,
   NewRecurringInput,
+  NewSavingsGoalInput,
   QuickPreset,
   RecurringExpense,
   RecurringFrequency,
+  SavingsGoal,
   UpdateExpenseInput,
 } from '@/types/finance';
+import type { ValidatedBackupPayload } from '@/services/backupRestore';
 import {
   getCurrentMonthKey,
   getCurrentPeriodKey,
@@ -95,6 +98,15 @@ async function initSchema(db: SQLite.SQLiteDatabase): Promise<void> {
       merchant TEXT NOT NULL DEFAULT '',
       amount REAL NOT NULL,
       category TEXT NOT NULL DEFAULT 'other'
+    );
+
+    CREATE TABLE IF NOT EXISTS savings_goals (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      title TEXT NOT NULL,
+      target_amount REAL NOT NULL,
+      saved_amount REAL NOT NULL DEFAULT 0,
+      color TEXT NOT NULL DEFAULT '#10B981',
+      deadline TEXT
     );
   `);
 }
@@ -608,6 +620,140 @@ export async function deleteQuickPreset(id: number): Promise<void> {
   await db.runAsync('DELETE FROM quick_presets WHERE id = ?', id);
 }
 
+// --- Savings Goals ---
+
+interface SavingsGoalRow {
+  id: number;
+  title: string;
+  target_amount: number;
+  saved_amount: number;
+  color: string;
+  deadline: string | null;
+}
+
+export async function fetchAllSavingsGoals(): Promise<SavingsGoal[]> {
+  const db = await getDb();
+  const rows = await db.getAllAsync<SavingsGoalRow>(
+    'SELECT * FROM savings_goals ORDER BY id ASC'
+  );
+  return rows.map((r) => ({
+    id: r.id,
+    title: r.title,
+    targetAmount: r.target_amount,
+    savedAmount: r.saved_amount,
+    color: r.color,
+    deadline: r.deadline,
+  }));
+}
+
+export async function insertSavingsGoal(input: NewSavingsGoalInput): Promise<number> {
+  const db = await getDb();
+  const res = await db.runAsync(
+    `INSERT INTO savings_goals (title, target_amount, saved_amount, color, deadline)
+     VALUES (?, ?, ?, ?, ?)`,
+    input.title.trim(),
+    Math.round(input.targetAmount * 100) / 100,
+    Math.round((input.savedAmount ?? 0) * 100) / 100,
+    input.color ?? '#10B981',
+    input.deadline ?? null
+  );
+  return res.lastInsertRowId;
+}
+
+export async function addAmountToSavingsGoal(id: number, delta: number): Promise<void> {
+  const db = await getDb();
+  const existing = await db.getFirstAsync<SavingsGoalRow>(
+    'SELECT * FROM savings_goals WHERE id = ?',
+    id
+  );
+  if (!existing) return;
+  const next = Math.max(0, Math.round((existing.saved_amount + delta) * 100) / 100);
+  await db.runAsync('UPDATE savings_goals SET saved_amount = ? WHERE id = ?', next, id);
+}
+
+export async function deleteSavingsGoal(id: number): Promise<void> {
+  const db = await getDb();
+  await db.runAsync('DELETE FROM savings_goals WHERE id = ?', id);
+}
+
+// --- Backup Restore ---
+
+export async function restoreBackupToDb(
+  payload: ValidatedBackupPayload,
+  mode: 'replace' | 'merge'
+): Promise<{ importedExpenses: number; skippedDuplicates: number }> {
+  if (mode === 'replace') {
+    await clearAllData();
+  }
+
+  const existingExpenses = mode === 'merge' ? await fetchAllExpenses() : [];
+  const existingKeys = new Set(
+    existingExpenses.map(
+      (e) => `${e.date}|${e.amount.toFixed(2)}|${e.title.trim().toLowerCase()}`
+    )
+  );
+
+  let importedExpenses = 0;
+  let skippedDuplicates = 0;
+
+  for (const exp of payload.expenses) {
+    const key = `${exp.date}|${exp.amount.toFixed(2)}|${exp.title.trim().toLowerCase()}`;
+    if (mode === 'merge' && existingKeys.has(key)) {
+      skippedDuplicates += 1;
+      continue;
+    }
+    await insertExpense(exp);
+    existingKeys.add(key);
+    importedExpenses += 1;
+  }
+
+  for (const b of payload.budgets) {
+    await upsertBudget(b.category, b.monthlyLimit);
+  }
+
+  const existingRec = mode === 'merge' ? await fetchAllRecurring() : [];
+  const existingRecKeys = new Set(
+    existingRec.map((r) => `${r.title.trim().toLowerCase()}|${r.amount.toFixed(2)}`)
+  );
+  for (const r of payload.recurring) {
+    const k = `${r.title.trim().toLowerCase()}|${r.amount.toFixed(2)}`;
+    if (mode === 'merge' && existingRecKeys.has(k)) continue;
+    await insertRecurring(r);
+    existingRecKeys.add(k);
+  }
+
+  const existingPresets = mode === 'merge' ? await fetchAllQuickPresets() : [];
+  const existingPresetKeys = new Set(
+    existingPresets.map((p) => `${p.title.trim().toLowerCase()}|${p.amount.toFixed(2)}`)
+  );
+  for (const p of payload.quickPresets) {
+    const k = `${p.title.trim().toLowerCase()}|${p.amount.toFixed(2)}`;
+    if (mode === 'merge' && existingPresetKeys.has(k)) continue;
+    await insertQuickPreset(p);
+    existingPresetKeys.add(k);
+  }
+
+  const existingGoals = mode === 'merge' ? await fetchAllSavingsGoals() : [];
+  const existingGoalKeys = new Set(
+    existingGoals.map((g) => g.title.trim().toLowerCase())
+  );
+  for (const g of payload.savingsGoals) {
+    const k = g.title.trim().toLowerCase();
+    if (mode === 'merge' && existingGoalKeys.has(k)) continue;
+    await insertSavingsGoal(g);
+    existingGoalKeys.add(k);
+  }
+
+  if (payload.currency) {
+    await setAppSetting('currency', payload.currency);
+  }
+  if (payload.monthlyIncome !== undefined) {
+    await setAppSetting('monthly_income', String(payload.monthlyIncome));
+  }
+
+  return { importedExpenses, skippedDuplicates };
+}
+
 // --- Reset ---
 
 export async function clearAllData(): Promise<void> {
@@ -619,6 +765,7 @@ export async function clearAllData(): Promise<void> {
     DELETE FROM recurring_expenses;
     DELETE FROM merchant_rules;
     DELETE FROM quick_presets;
+    DELETE FROM savings_goals;
   `);
 }
 

@@ -135,6 +135,23 @@ export interface NewQuickPresetInput {
   category: CategoryId;
 }
 
+export interface SavingsGoal {
+  id: number;
+  title: string;
+  targetAmount: number;
+  savedAmount: number;
+  color: string;
+  deadline: string | null;
+}
+
+export interface NewSavingsGoalInput {
+  title: string;
+  targetAmount: number;
+  savedAmount?: number;
+  color?: string;
+  deadline?: string | null;
+}
+
 export interface ParsedReceipt {
   merchant: string;
   amount: number | null;

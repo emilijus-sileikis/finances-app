@@ -36,6 +36,7 @@ export default function OverviewScreen() {
     setLanguage,
     currency,
     formatMoney,
+    monthlyIncome,
     expenses,
     budgets,
     selectedMonth,
@@ -336,6 +337,36 @@ export default function OverviewScreen() {
                     {t.safeDailyBudget(formatMoney(safeDailySpend), daysLeft)}
                   </Text>
                 </View>
+              )}
+
+              {monthlyIncome > 0 && (
+                <Pressable
+                  onPress={() => router.push('/insights')}
+                  style={[
+                    styles.dailyPill,
+                    monthlyIncome - totalSpent < 0 && { backgroundColor: Colors.dangerSoft },
+                  ]}
+                >
+                  <Ionicons
+                    name={
+                      monthlyIncome - totalSpent >= 0
+                        ? 'wallet-outline'
+                        : 'alert-circle-outline'
+                    }
+                    size={15}
+                    color={
+                      monthlyIncome - totalSpent >= 0 ? Colors.primary : Colors.danger
+                    }
+                  />
+                  <Text style={styles.dailyPillText}>
+                    {monthlyIncome - totalSpent >= 0
+                      ? t.netSavedPill(
+                          formatMoney(monthlyIncome - totalSpent),
+                          Math.round(((monthlyIncome - totalSpent) / monthlyIncome) * 100)
+                        )
+                      : t.netOverspentPill(formatMoney(totalSpent - monthlyIncome))}
+                  </Text>
+                </Pressable>
               )}
             </View>
 

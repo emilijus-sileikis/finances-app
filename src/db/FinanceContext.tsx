@@ -1,26 +1,32 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import {
+  addAmountToSavingsGoal,
   clearAllData,
   deleteExpense,
   deleteQuickPreset,
   deleteRecurring,
+  deleteSavingsGoal,
   fetchAllBudgets,
   fetchAllExpenses,
   fetchAllQuickPresets,
   fetchAllRecurring,
+  fetchAllSavingsGoals,
   fetchMerchantRules,
   getAppSetting,
   insertExpense,
   insertQuickPreset,
   insertRecurring,
+  insertSavingsGoal,
   logRecurringForCurrentPeriod,
   processDueAutoRecurring,
+  restoreBackupToDb,
   setAppSetting,
   toggleRecurringActive,
   toggleRecurringAutoLog,
   updateExpense,
   upsertBudget,
 } from '@/db/database';
+import type { ValidatedBackupPayload } from '@/services/backupRestore';
 import {
   formatCurrency,
   getCurrencyMeta,
@@ -38,8 +44,10 @@ import type {
   NewExpenseInput,
   NewQuickPresetInput,
   NewRecurringInput,
+  NewSavingsGoalInput,
   QuickPreset,
   RecurringExpense,
+  SavingsGoal,
   UpdateExpenseInput,
 } from '@/types/finance';
 import {
@@ -57,11 +65,14 @@ interface FinanceContextValue {
   currencyMeta: CurrencyMeta;
   setCurrency: (code: CurrencyCode) => Promise<void>;
   formatMoney: (amount: number, showDecimals?: boolean) => string;
+  monthlyIncome: number;
+  setMonthlyIncome: (amount: number) => Promise<void>;
   expenses: Expense[];
   budgets: CategoryBudget[];
   recurring: RecurringExpense[];
   merchantRules: MerchantRule[];
   quickPresets: QuickPreset[];
+  savingsGoals: SavingsGoal[];
   selectedMonth: string;
   setSelectedMonth: (monthKey: string) => void;
   autoLoggedBannerCount: number;
@@ -80,6 +91,13 @@ interface FinanceContextValue {
   addQuickPreset: (input: NewQuickPresetInput) => Promise<number>;
   removeQuickPreset: (id: number) => Promise<void>;
   logQuickPreset: (preset: QuickPreset) => Promise<number>;
+  addSavingsGoal: (input: NewSavingsGoalInput) => Promise<number>;
+  contributeToGoal: (id: number, delta: number) => Promise<void>;
+  removeSavingsGoal: (id: number) => Promise<void>;
+  importBackup: (
+    payload: ValidatedBackupPayload,
+    mode: 'replace' | 'merge'
+  ) => Promise<{ importedExpenses: number; skippedDuplicates: number }>;
   resetAllData: () => Promise<void>;
 }
 
@@ -89,42 +107,54 @@ export function FinanceProvider({ children }: { children: React.ReactNode }) {
   const [ready, setReady] = useState(false);
   const [language, setLanguageState] = useState<Language>('en');
   const [currency, setCurrencyState] = useState<CurrencyCode>('EUR');
+  const [monthlyIncome, setMonthlyIncomeState] = useState<number>(0);
   const [expenses, setExpenses] = useState<Expense[]>([]);
   const [budgets, setBudgets] = useState<CategoryBudget[]>([]);
   const [recurring, setRecurring] = useState<RecurringExpense[]>([]);
   const [merchantRules, setMerchantRules] = useState<MerchantRule[]>([]);
   const [quickPresets, setQuickPresets] = useState<QuickPreset[]>([]);
+  const [savingsGoals, setSavingsGoals] = useState<SavingsGoal[]>([]);
   const [selectedMonth, setSelectedMonth] = useState<string>(getCurrentMonthKey());
   const [autoLoggedBannerCount, setAutoLoggedBannerCount] = useState(0);
 
   const refresh = useCallback(async () => {
-    const [expRows, budgetRows, recRows, ruleRows, presetRows] = await Promise.all([
-      fetchAllExpenses(),
-      fetchAllBudgets(),
-      fetchAllRecurring(),
-      fetchMerchantRules(),
-      fetchAllQuickPresets(),
-    ]);
+    const [expRows, budgetRows, recRows, ruleRows, presetRows, goalRows] =
+      await Promise.all([
+        fetchAllExpenses(),
+        fetchAllBudgets(),
+        fetchAllRecurring(),
+        fetchMerchantRules(),
+        fetchAllQuickPresets(),
+        fetchAllSavingsGoals(),
+      ]);
     setExpenses(expRows);
     setBudgets(budgetRows);
     setRecurring(recRows);
     setMerchantRules(ruleRows);
     setQuickPresets(presetRows);
+    setSavingsGoals(goalRows);
   }, []);
 
   useEffect(() => {
     let active = true;
     (async () => {
       try {
-        const [savedLang, savedCurrency] = await Promise.all([
+        const [savedLang, savedCurrency, savedIncome] = await Promise.all([
           getAppSetting('language'),
           getAppSetting('currency'),
+          getAppSetting('monthly_income'),
         ]);
         if (active && (savedLang === 'en' || savedLang === 'lt')) {
           setLanguageState(savedLang);
         }
         if (active && isCurrencyCode(savedCurrency)) {
           setCurrencyState(savedCurrency);
+        }
+        if (active && savedIncome) {
+          const parsedInc = Number(savedIncome);
+          if (Number.isFinite(parsedInc) && parsedInc >= 0) {
+            setMonthlyIncomeState(parsedInc);
+          }
         }
         const logged = await processDueAutoRecurring();
         if (active && logged > 0) {
@@ -150,6 +180,12 @@ export function FinanceProvider({ children }: { children: React.ReactNode }) {
   const setCurrency = useCallback(async (code: CurrencyCode) => {
     setCurrencyState(code);
     await setAppSetting('currency', code);
+  }, []);
+
+  const setMonthlyIncome = useCallback(async (amount: number) => {
+    const safe = Number.isFinite(amount) && amount > 0 ? Math.round(amount * 100) / 100 : 0;
+    setMonthlyIncomeState(safe);
+    await setAppSetting('monthly_income', String(safe));
   }, []);
 
   const currencyMeta = useMemo(() => getCurrencyMeta(currency), [currency]);
@@ -287,11 +323,51 @@ export function FinanceProvider({ children }: { children: React.ReactNode }) {
     [refresh]
   );
 
+  const addSavingsGoal = useCallback(
+    async (input: NewSavingsGoalInput) => {
+      const id = await insertSavingsGoal(input);
+      await refresh();
+      return id;
+    },
+    [refresh]
+  );
+
+  const contributeToGoal = useCallback(
+    async (id: number, delta: number) => {
+      await addAmountToSavingsGoal(id, delta);
+      await refresh();
+    },
+    [refresh]
+  );
+
+  const removeSavingsGoal = useCallback(
+    async (id: number) => {
+      await deleteSavingsGoal(id);
+      await refresh();
+    },
+    [refresh]
+  );
+
+  const importBackup = useCallback(
+    async (payload: ValidatedBackupPayload, mode: 'replace' | 'merge') => {
+      const res = await restoreBackupToDb(payload, mode);
+      if (payload.currency) setCurrencyState(payload.currency);
+      if (payload.monthlyIncome !== undefined) {
+        setMonthlyIncomeState(payload.monthlyIncome);
+      }
+      await refresh();
+      return res;
+    },
+    [refresh]
+  );
+
   const resetAllData = useCallback(async () => {
     for (const exp of expenses) {
       if (exp.receiptUri) deleteReceiptFile(exp.receiptUri);
     }
     await clearAllData();
+    await setAppSetting('monthly_income', '0');
+    setMonthlyIncomeState(0);
     await refresh();
   }, [expenses, refresh]);
 
@@ -311,11 +387,14 @@ export function FinanceProvider({ children }: { children: React.ReactNode }) {
       currencyMeta,
       setCurrency,
       formatMoney,
+      monthlyIncome,
+      setMonthlyIncome,
       expenses,
       budgets,
       recurring,
       merchantRules,
       quickPresets,
+      savingsGoals,
       selectedMonth,
       setSelectedMonth,
       autoLoggedBannerCount,
@@ -334,6 +413,10 @@ export function FinanceProvider({ children }: { children: React.ReactNode }) {
       addQuickPreset,
       removeQuickPreset,
       logQuickPreset,
+      addSavingsGoal,
+      contributeToGoal,
+      removeSavingsGoal,
+      importBackup,
       resetAllData,
     }),
     [
@@ -345,11 +428,14 @@ export function FinanceProvider({ children }: { children: React.ReactNode }) {
       currencyMeta,
       setCurrency,
       formatMoney,
+      monthlyIncome,
+      setMonthlyIncome,
       expenses,
       budgets,
       recurring,
       merchantRules,
       quickPresets,
+      savingsGoals,
       selectedMonth,
       autoLoggedBannerCount,
       dismissAutoLoggedBanner,
@@ -367,6 +453,10 @@ export function FinanceProvider({ children }: { children: React.ReactNode }) {
       addQuickPreset,
       removeQuickPreset,
       logQuickPreset,
+      addSavingsGoal,
+      contributeToGoal,
+      removeSavingsGoal,
+      importBackup,
       resetAllData,
     ]
   );

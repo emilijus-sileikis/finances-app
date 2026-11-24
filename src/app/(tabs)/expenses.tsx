@@ -15,6 +15,7 @@ import { ExpenseDetailModal } from '@/components/ExpenseDetailModal';
 import { CATEGORIES, getCategoryMeta } from '@/constants/categories';
 import { useFinances } from '@/db/FinanceContext';
 import { getCategoryLabel } from '@/i18n/translations';
+import { analyzeProductPrices } from '@/services/priceHistory';
 import { exportExpensesCsv, isPdfUri } from '@/services/receiptStorage';
 import { getMonthExpenses } from '@/services/savingsEngine';
 import { Colors } from '@/theme/colors';
@@ -82,6 +83,11 @@ export default function ExpensesScreen() {
     }
     return { count, total: Math.round(total * 100) / 100 };
   }, [filtered, normalizedQuery]);
+
+  const matchedPriceSummary = useMemo(
+    () => (normalizedQuery.length >= 2 ? analyzeProductPrices(filtered, normalizedQuery) : null),
+    [filtered, normalizedQuery]
+  );
 
   const toggleExpand = (id: number) => {
     setExpandedExpenseIds((prev) => ({ ...prev, [id]: !prev[id] }));
@@ -163,17 +169,28 @@ export default function ExpensesScreen() {
         )}
       </View>
 
-      {/* Matching Line Items Banner */}
+      {/* Matching Line Items + Cheapest Store Banner */}
       {matchedLineItemsStats.count > 0 && (
         <View style={styles.matchBanner}>
-          <Ionicons name="pricetag-outline" size={15} color={Colors.primary} />
-          <Text style={styles.matchBannerText}>
-            {t.matchingItemsBanner(
-              matchedLineItemsStats.count,
-              search.trim(),
-              formatMoney(matchedLineItemsStats.total)
+          <Ionicons name="pricetag-outline" size={16} color={Colors.primary} />
+          <View style={{ flex: 1, gap: 2 }}>
+            <Text style={styles.matchBannerText}>
+              {t.matchingItemsBanner(
+                matchedLineItemsStats.count,
+                search.trim(),
+                formatMoney(matchedLineItemsStats.total)
+              )}
+            </Text>
+            {matchedPriceSummary?.cheapestStore && (
+              <Text style={styles.matchSubText}>
+                {t.cheapestAt(
+                  matchedPriceSummary.cheapestStore.store,
+                  formatMoney(matchedPriceSummary.cheapestStore.minUnitPrice)
+                )}{' '}
+                • {t.priceAvgLabel}: {formatMoney(matchedPriceSummary.avgUnitPrice)}
+              </Text>
             )}
-          </Text>
+          </View>
         </View>
       )}
 
@@ -489,10 +506,14 @@ const styles = StyleSheet.create({
     borderColor: Colors.primary,
   },
   matchBannerText: {
-    flex: 1,
     color: Colors.text,
     fontSize: 12,
     fontWeight: '700',
+  },
+  matchSubText: {
+    color: Colors.primary,
+    fontSize: 11,
+    fontWeight: '600',
   },
   chipsRow: {
     paddingHorizontal: 16,

@@ -1,7 +1,13 @@
 import { Directory, File, Paths } from 'expo-file-system';
 import * as Sharing from 'expo-sharing';
 import { getCurrencyMeta, type CurrencyCode } from '@/constants/currencies';
-import type { CategoryBudget, Expense, RecurringExpense } from '@/types/finance';
+import type {
+  CategoryBudget,
+  Expense,
+  QuickPreset,
+  RecurringExpense,
+  SavingsGoal,
+} from '@/types/finance';
 
 function getReceiptsDir(): Directory {
   const dir = new Directory(Paths.document, 'receipts');
@@ -164,9 +170,12 @@ export async function exportExpensesCsv(
 
 export async function exportFullBackupJson(payload: {
   currency: CurrencyCode;
+  monthlyIncome?: number;
   expenses: Expense[];
   budgets: CategoryBudget[];
   recurring: RecurringExpense[];
+  quickPresets?: QuickPreset[];
+  savingsGoals?: SavingsGoal[];
 }): Promise<boolean> {
   const json = JSON.stringify(
     {
@@ -188,4 +197,14 @@ export async function exportFullBackupJson(payload: {
     dialogTitle: 'Export Local Backup JSON',
   });
   return true;
+}
+
+export async function pickJsonBackupText(): Promise<string | null> {
+  const picked = await File.pickFileAsync({
+    mimeTypes: ['application/json', 'text/plain', '*/*'],
+    multipleFiles: false,
+  });
+
+  if (picked.canceled || !picked.result) return null;
+  return picked.result.text();
 }

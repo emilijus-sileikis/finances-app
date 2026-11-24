@@ -1,20 +1,28 @@
 import React, { useMemo, useState } from 'react';
 import {
   Alert,
+  Modal,
   Pressable,
   ScrollView,
   StyleSheet,
   Text,
+  TextInput,
   View,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { TrendBarChart } from '@/components/TrendBarChart';
-import { CURRENCIES } from '@/constants/currencies';
+import { CURRENCIES, formatEditableAmount } from '@/constants/currencies';
 import { useFinances } from '@/db/FinanceContext';
+import { parseBackupJson } from '@/services/backupRestore';
+import {
+  analyzeProductPrices,
+  getTopTrackedProducts,
+} from '@/services/priceHistory';
 import {
   exportExpensesCsv,
   exportFullBackupJson,
+  pickJsonBackupText,
 } from '@/services/receiptStorage';
 import {
   computeDiscretionaryTotal,
@@ -23,9 +31,15 @@ import {
   getMonthExpenses,
 } from '@/services/savingsEngine';
 import { Colors } from '@/theme/colors';
-import { formatMonthLabel } from '@/utils/format';
+import type { SavingsGoal } from '@/types/finance';
+import {
+  formatDisplayDate,
+  formatMonthLabel,
+  parseFlexibleAmount,
+} from '@/utils/format';
 
 const TRIM_OPTIONS = [10, 15, 20, 30, 50] as const;
+const GOAL_COLORS = ['#10B981', '#38BDF8', '#A78BFA', '#F59E0B', '#EC4899', '#EF4444'] as const;
 
 export default function InsightsScreen() {
   const {
@@ -36,19 +50,53 @@ export default function InsightsScreen() {
     currencyMeta,
     setCurrency,
     formatMoney,
+    monthlyIncome,
+    setMonthlyIncome,
     expenses,
     budgets,
     recurring,
+    quickPresets,
+    savingsGoals,
     selectedMonth,
+    addSavingsGoal,
+    contributeToGoal,
+    removeSavingsGoal,
+    importBackup,
     resetAllData,
   } = useFinances();
 
   const [trimPercent, setTrimPercent] = useState<number>(20);
 
+  // Income modal
+  const [showIncomeModal, setShowIncomeModal] = useState(false);
+  const [incomeInput, setIncomeInput] = useState('');
+
+  // Savings goal modals
+  const [showGoalModal, setShowGoalModal] = useState(false);
+  const [goalTitle, setGoalTitle] = useState('');
+  const [goalTarget, setGoalTarget] = useState('');
+  const [goalSaved, setGoalSaved] = useState('');
+  const [goalColor, setGoalColor] = useState<string>(GOAL_COLORS[0]);
+
+  const [contribGoal, setContribGoal] = useState<SavingsGoal | null>(null);
+  const [contribInput, setContribInput] = useState('');
+
+  // Product price tracker search
+  const [priceQuery, setPriceQuery] = useState('');
+
   const monthExpenses = useMemo(
     () => getMonthExpenses(expenses, selectedMonth),
     [expenses, selectedMonth]
   );
+
+  const monthSpent = useMemo(
+    () => monthExpenses.reduce((s, e) => s + e.amount, 0),
+    [monthExpenses]
+  );
+
+  const netSaved = monthlyIncome > 0 ? monthlyIncome - monthSpent : 0;
+  const savingsRate =
+    monthlyIncome > 0 ? Math.round((netSaved / monthlyIncome) * 100) : 0;
 
   const tips = useMemo(
     () =>
@@ -95,11 +143,132 @@ export default function InsightsScreen() {
     [monthExpenses]
   );
 
+  // Product Price Tracker memos
+  const topProducts = useMemo(() => getTopTrackedProducts(expenses, 8), [expenses]);
+  const priceSummary = useMemo(
+    () => analyzeProductPrices(expenses, priceQuery),
+    [expenses, priceQuery]
+  );
+
+  // --- Handlers ---
+
+  const openIncomeModal = () => {
+    setIncomeInput(
+      monthlyIncome > 0 ? formatEditableAmount(monthlyIncome, currency) : ''
+    );
+    setShowIncomeModal(true);
+  };
+
+  const handleSaveIncome = async () => {
+    const trimmed = incomeInput.trim();
+    if (!trimmed || trimmed === '0') {
+      await setMonthlyIncome(0);
+      setShowIncomeModal(false);
+      return;
+    }
+    const val = parseFlexibleAmount(trimmed);
+    if (val === null || val < 0) {
+      Alert.alert(t.alertAmountTitle, t.alertAmountBody);
+      return;
+    }
+    await setMonthlyIncome(val);
+    setShowIncomeModal(false);
+  };
+
+  const handleCreateGoal = async () => {
+    const target = parseFlexibleAmount(goalTarget);
+    if (!goalTitle.trim() || target === null || target <= 0) {
+      Alert.alert(t.alertAmountTitle, t.alertAmountBody);
+      return;
+    }
+    const saved = goalSaved.trim() ? parseFlexibleAmount(goalSaved) ?? 0 : 0;
+    await addSavingsGoal({
+      title: goalTitle.trim(),
+      targetAmount: target,
+      savedAmount: saved,
+      color: goalColor,
+    });
+    setGoalTitle('');
+    setGoalTarget('');
+    setGoalSaved('');
+    setGoalColor(GOAL_COLORS[0]);
+    setShowGoalModal(false);
+  };
+
+  const handleContribute = async () => {
+    if (!contribGoal) return;
+    const delta = parseFlexibleAmount(contribInput, true);
+    if (delta === null || delta === 0) return;
+    await contributeToGoal(contribGoal.id, delta);
+    setContribGoal(null);
+    setContribInput('');
+  };
+
+  const handleDeleteGoal = (goal: SavingsGoal) => {
+    Alert.alert(t.goalDeleteTitle, t.goalDeleteBody(goal.title), [
+      { text: t.cancel, style: 'cancel' },
+      { text: t.delete, style: 'destructive', onPress: () => removeSavingsGoal(goal.id) },
+    ]);
+  };
+
   const handleExportBackup = async () => {
     try {
-      await exportFullBackupJson({ currency, expenses, budgets, recurring });
+      await exportFullBackupJson({
+        currency,
+        monthlyIncome,
+        expenses,
+        budgets,
+        recurring,
+        quickPresets,
+        savingsGoals,
+      });
     } catch {
       Alert.alert('JSON', 'Could not export JSON backup.');
+    }
+  };
+
+  const handleImportBackup = async () => {
+    try {
+      const raw = await pickJsonBackupText();
+      if (!raw) return;
+      const validated = parseBackupJson(raw);
+
+      Alert.alert(
+        t.restoreConfirmTitle,
+        t.restoreConfirmBody(
+          validated.expenses.length,
+          validated.budgets.length,
+          validated.recurring.length,
+          validated.savingsGoals.length
+        ),
+        [
+          { text: t.cancel, style: 'cancel' },
+          {
+            text: t.restoreMergeBtn,
+            onPress: async () => {
+              const res = await importBackup(validated, 'merge');
+              Alert.alert(
+                t.restoreDoneTitle,
+                t.restoreDoneBody(res.importedExpenses, res.skippedDuplicates)
+              );
+            },
+          },
+          {
+            text: t.restoreReplaceBtn,
+            style: 'destructive',
+            onPress: async () => {
+              const res = await importBackup(validated, 'replace');
+              Alert.alert(
+                t.restoreDoneTitle,
+                t.restoreDoneBody(res.importedExpenses, res.skippedDuplicates)
+              );
+            },
+          },
+        ]
+      );
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Invalid backup file.';
+      Alert.alert(t.restoreFailTitle, msg);
     }
   };
 
@@ -127,12 +296,276 @@ export default function InsightsScreen() {
       <ScrollView
         contentContainerStyle={styles.scroll}
         showsVerticalScrollIndicator={false}
+        keyboardShouldPersistTaps="handled"
       >
         <View style={styles.header}>
           <Text style={styles.pageTitle}>{t.savingsTitle}</Text>
           <Text style={styles.pageSub}>
             {t.savingsSub(formatMonthLabel(selectedMonth, language))}
           </Text>
+        </View>
+
+        {/* Monthly Income & Net Savings */}
+        <View style={styles.sectionHeaderRow}>
+          <Text style={styles.sectionTitle}>{t.incomeSectionTitle}</Text>
+          {monthlyIncome > 0 && (
+            <Pressable onPress={openIncomeModal}>
+              <Text style={styles.sectionLink}>{t.editIncomeBtn}</Text>
+            </Pressable>
+          )}
+        </View>
+        <View style={styles.card}>
+          {monthlyIncome <= 0 ? (
+            <View style={{ gap: 10 }}>
+              <Text style={styles.backupNote}>{t.incomeNotSet}</Text>
+              <Pressable onPress={openIncomeModal} style={styles.primaryOutlineBtn}>
+                <Ionicons name="cash-outline" size={16} color={Colors.primary} />
+                <Text style={styles.primaryOutlineText}>{t.setIncomeBtn}</Text>
+              </Pressable>
+            </View>
+          ) : (
+            <View style={styles.kpiStrip}>
+              <View style={styles.simBox}>
+                <Text style={styles.simBoxLabel}>{t.incomeLabel}</Text>
+                <Text style={styles.kpiNum}>{formatMoney(monthlyIncome, false)}</Text>
+              </View>
+              <View style={styles.simBox}>
+                <Text style={styles.simBoxLabel}>{t.netSavedLabel}</Text>
+                <Text
+                  style={[
+                    styles.kpiNum,
+                    { color: netSaved >= 0 ? Colors.primary : Colors.danger },
+                  ]}
+                >
+                  {netSaved >= 0 ? '+' : ''}
+                  {formatMoney(netSaved, false)}
+                </Text>
+              </View>
+              <View style={styles.simBox}>
+                <Text style={styles.simBoxLabel}>{t.savingsRateLabel}</Text>
+                <Text
+                  style={[
+                    styles.kpiNum,
+                    { color: savingsRate >= 20 ? Colors.primary : Colors.warning },
+                  ]}
+                >
+                  {savingsRate}%
+                </Text>
+              </View>
+            </View>
+          )}
+        </View>
+
+        {/* Savings Goals */}
+        <View style={styles.sectionHeaderRow}>
+          <Text style={styles.sectionTitle}>{t.goalsSectionTitle}</Text>
+          <Pressable onPress={() => setShowGoalModal(true)} style={styles.smallAddBtn}>
+            <Ionicons name="add" size={14} color={Colors.primary} />
+            <Text style={styles.smallAddText}>{t.addGoalBtn}</Text>
+          </Pressable>
+        </View>
+        <View style={styles.card}>
+          {savingsGoals.length === 0 ? (
+            <Text style={styles.backupNote}>{t.goalsEmpty}</Text>
+          ) : (
+            savingsGoals.map((goal, idx) => {
+              const pct = Math.min(
+                100,
+                Math.round((goal.savedAmount / Math.max(1, goal.targetAmount)) * 100)
+              );
+              const remaining = Math.max(0, goal.targetAmount - goal.savedAmount);
+              const estMonths =
+                remaining > 0 && netSaved > 0
+                  ? Math.ceil(remaining / netSaved)
+                  : null;
+
+              return (
+                <View
+                  key={goal.id}
+                  style={[
+                    styles.goalRow,
+                    idx < savingsGoals.length - 1 && styles.goalDivider,
+                  ]}
+                >
+                  <View style={styles.goalTop}>
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.goalTitle}>{goal.title}</Text>
+                      <Text style={styles.goalSub}>
+                        {formatMoney(goal.savedAmount, false)} /{' '}
+                        {formatMoney(goal.targetAmount, false)} ({pct}%)
+                      </Text>
+                    </View>
+                    <Pressable
+                      onPress={() => {
+                        setContribGoal(goal);
+                        setContribInput('');
+                      }}
+                      style={styles.contribBtn}
+                    >
+                      <Text style={styles.contribBtnText}>{t.goalAddMoneyBtn}</Text>
+                    </Pressable>
+                    <Pressable
+                      onPress={() => handleDeleteGoal(goal)}
+                      style={styles.trashMini}
+                      hitSlop={6}
+                    >
+                      <Ionicons name="trash-outline" size={15} color={Colors.danger} />
+                    </Pressable>
+                  </View>
+                  <View style={styles.barTrack}>
+                    <View
+                      style={[
+                        styles.barFill,
+                        { width: `${Math.max(3, pct)}%`, backgroundColor: goal.color },
+                      ]}
+                    />
+                  </View>
+                  {remaining === 0 ? (
+                    <Text style={[styles.goalHint, { color: Colors.primary }]}>
+                      {t.goalReached}
+                    </Text>
+                  ) : estMonths !== null ? (
+                    <Text style={styles.goalHint}>{t.goalEstMonths(estMonths)}</Text>
+                  ) : null}
+                </View>
+              );
+            })
+          )}
+        </View>
+
+        {/* Product Price Comparison & History */}
+        <Text style={styles.sectionTitle}>{t.priceTrackerTitle}</Text>
+        <View style={styles.card}>
+          <Text style={styles.backupNote}>{t.priceTrackerSub}</Text>
+          <View style={styles.searchWrap}>
+            <Ionicons name="search-outline" size={16} color={Colors.textMuted} />
+            <TextInput
+              value={priceQuery}
+              onChangeText={setPriceQuery}
+              placeholder={t.priceSearchPlaceholder}
+              placeholderTextColor={Colors.textMuted}
+              style={styles.searchInput}
+            />
+            {priceQuery.length > 0 && (
+              <Pressable onPress={() => setPriceQuery('')}>
+                <Ionicons name="close-circle" size={16} color={Colors.textMuted} />
+              </Pressable>
+            )}
+          </View>
+
+          {topProducts.length === 0 ? (
+            <Text style={styles.backupNote}>{t.priceTrackerEmpty}</Text>
+          ) : (
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={styles.productChips}
+            >
+              {topProducts.map((p) => {
+                const active = priceQuery.trim().toLowerCase() === p.key;
+                return (
+                  <Pressable
+                    key={p.key}
+                    onPress={() => setPriceQuery(p.key)}
+                    style={[styles.productChip, active && styles.productChipActive]}
+                  >
+                    <Text
+                      style={[
+                        styles.productChipName,
+                        active && { color: Colors.primary },
+                      ]}
+                      numberOfLines={1}
+                    >
+                      {p.displayName}
+                    </Text>
+                    <Text style={styles.productChipMeta}>
+                      {t.priceHistoryCount(p.count)} • {formatMoney(p.cheapestPrice)}
+                    </Text>
+                  </Pressable>
+                );
+              })}
+            </ScrollView>
+          )}
+
+          {priceQuery.trim().length >= 2 &&
+            (priceSummary ? (
+              <View style={styles.priceDetailBox}>
+                {priceSummary.cheapestStore && (
+                  <View style={styles.cheapestPill}>
+                    <Ionicons name="trophy-outline" size={14} color={Colors.primary} />
+                    <Text style={styles.cheapestText}>
+                      {t.cheapestAt(
+                        priceSummary.cheapestStore.store,
+                        formatMoney(priceSummary.cheapestStore.minUnitPrice)
+                      )}
+                    </Text>
+                  </View>
+                )}
+
+                <View style={styles.kpiStrip}>
+                  <View style={styles.simBox}>
+                    <Text style={styles.simBoxLabel}>{t.priceAvgLabel}</Text>
+                    <Text style={styles.kpiNum}>
+                      {formatMoney(priceSummary.avgUnitPrice)}
+                    </Text>
+                  </View>
+                  <View style={styles.simBox}>
+                    <Text style={styles.simBoxLabel}>{t.priceRangeLabel}</Text>
+                    <Text style={styles.kpiNumSmall}>
+                      {formatMoney(priceSummary.minUnitPrice)} –{' '}
+                      {formatMoney(priceSummary.maxUnitPrice)}
+                    </Text>
+                  </View>
+                  {priceSummary.priceChangePct !== null && (
+                    <View style={styles.simBox}>
+                      <Text style={styles.simBoxLabel}>{t.priceTrendLabel}</Text>
+                      <Text
+                        style={[
+                          styles.kpiNum,
+                          {
+                            color:
+                              priceSummary.priceChangePct > 0
+                                ? Colors.danger
+                                : Colors.primary,
+                          },
+                        ]}
+                      >
+                        {priceSummary.priceChangePct > 0 ? '+' : ''}
+                        {priceSummary.priceChangePct}%
+                      </Text>
+                    </View>
+                  )}
+                </View>
+
+                <View style={styles.historyList}>
+                  {priceSummary.history.slice(0, 6).map((h, idx) => (
+                    <View
+                      key={`${h.expenseId}_${idx}`}
+                      style={[
+                        styles.historyRow,
+                        idx < Math.min(priceSummary.history.length, 6) - 1 &&
+                          styles.historyBorder,
+                      ]}
+                    >
+                      <View style={{ flex: 1 }}>
+                        <Text style={styles.historyStore} numberOfLines={1}>
+                          {h.store} • {h.itemName}
+                        </Text>
+                        <Text style={styles.historyDate}>
+                          {formatDisplayDate(h.date, language)}
+                          {h.quantity !== 1 ? ` • ×${h.quantity}` : ''}
+                        </Text>
+                      </View>
+                      <Text style={styles.historyPrice}>
+                        {formatMoney(h.unitPrice)}
+                      </Text>
+                    </View>
+                  ))}
+                </View>
+              </View>
+            ) : (
+              <Text style={styles.backupNote}>{t.priceNoMatch}</Text>
+            ))}
         </View>
 
         {/* Potential Savings Highlight */}
@@ -267,10 +700,7 @@ export default function InsightsScreen() {
                 <Pressable
                   key={cur.code}
                   onPress={() => setCurrency(cur.code)}
-                  style={[
-                    styles.currencyOption,
-                    active && styles.langOptionActive,
-                  ]}
+                  style={[styles.currencyOption, active && styles.langOptionActive]}
                 >
                   <Text
                     style={[
@@ -305,10 +735,7 @@ export default function InsightsScreen() {
           <View style={styles.langRow}>
             <Pressable
               onPress={() => setLanguage('en')}
-              style={[
-                styles.langOption,
-                language === 'en' && styles.langOptionActive,
-              ]}
+              style={[styles.langOption, language === 'en' && styles.langOptionActive]}
             >
               <Ionicons
                 name={language === 'en' ? 'radio-button-on' : 'radio-button-off'}
@@ -326,10 +753,7 @@ export default function InsightsScreen() {
             </Pressable>
             <Pressable
               onPress={() => setLanguage('lt')}
-              style={[
-                styles.langOption,
-                language === 'lt' && styles.langOptionActive,
-              ]}
+              style={[styles.langOption, language === 'lt' && styles.langOptionActive]}
             >
               <Ionicons
                 name={language === 'lt' ? 'radio-button-on' : 'radio-button-off'}
@@ -348,7 +772,7 @@ export default function InsightsScreen() {
           </View>
         </View>
 
-        {/* Local Data & Backup */}
+        {/* Local Data & Backups (Export CSV, Backup JSON, Restore JSON, Reset) */}
         <Text style={styles.sectionTitle}>{t.localDataTitle}</Text>
         <View style={styles.card}>
           <Text style={styles.backupNote}>{t.localDataNote}</Text>
@@ -365,12 +789,174 @@ export default function InsightsScreen() {
             </Pressable>
           </View>
 
+          <Pressable onPress={handleImportBackup} style={styles.restoreBtn}>
+            <Ionicons name="cloud-upload-outline" size={16} color={Colors.purple} />
+            <Text style={[styles.backupBtnText, { color: Colors.purple }]}>
+              {t.importJson}
+            </Text>
+          </Pressable>
+
           <Pressable onPress={handleReset} style={styles.dangerBtn}>
             <Ionicons name="trash-outline" size={15} color={Colors.danger} />
             <Text style={styles.dangerBtnText}>{t.resetAll}</Text>
           </Pressable>
         </View>
       </ScrollView>
+
+      {/* Monthly Income Modal */}
+      <Modal
+        visible={showIncomeModal}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowIncomeModal(false)}
+      >
+        <View style={styles.modalBackdrop}>
+          <View style={styles.modalCard}>
+            <Text style={styles.modalTitle}>{t.incomeModalTitle}</Text>
+            <Text style={styles.modalSub}>{t.incomeModalSub(currency)}</Text>
+            <View style={styles.euroRow}>
+              <Text style={styles.euroMark}>{currencyMeta.symbol}</Text>
+              <TextInput
+                value={incomeInput}
+                onChangeText={setIncomeInput}
+                keyboardType="decimal-pad"
+                placeholder={currencyMeta.decimals === 0 ? '3500000' : '2200'}
+                placeholderTextColor={Colors.textMuted}
+                autoFocus
+                style={styles.modalInput}
+              />
+            </View>
+            <View style={styles.modalActions}>
+              <Pressable
+                onPress={() => setShowIncomeModal(false)}
+                style={styles.cancelBtn}
+              >
+                <Text style={styles.cancelText}>{t.cancel}</Text>
+              </Pressable>
+              <Pressable onPress={handleSaveIncome} style={styles.confirmBtn}>
+                <Text style={styles.confirmText}>{t.saveIncomeBtn}</Text>
+              </Pressable>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Create Savings Goal Modal */}
+      <Modal
+        visible={showGoalModal}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setShowGoalModal(false)}
+      >
+        <View style={styles.sheetBackdrop}>
+          <View style={styles.sheet}>
+            <View style={styles.sheetHeader}>
+              <Text style={styles.modalTitle}>{t.goalModalTitle}</Text>
+              <Pressable onPress={() => setShowGoalModal(false)}>
+                <Ionicons name="close" size={22} color={Colors.text} />
+              </Pressable>
+            </View>
+            <ScrollView contentContainerStyle={styles.sheetBody}>
+              <Text style={styles.fieldLabel}>{t.titleLabel} *</Text>
+              <TextInput
+                value={goalTitle}
+                onChangeText={setGoalTitle}
+                placeholder={t.goalTitlePlaceholder}
+                placeholderTextColor={Colors.textMuted}
+                style={styles.fieldInput}
+              />
+
+              <View style={styles.backupRow}>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.fieldLabel}>
+                    {t.goalTargetLabel(currencyMeta.symbol)}
+                  </Text>
+                  <TextInput
+                    value={goalTarget}
+                    onChangeText={setGoalTarget}
+                    keyboardType="decimal-pad"
+                    placeholder={currencyMeta.decimals === 0 ? '2000000' : '1500'}
+                    placeholderTextColor={Colors.textMuted}
+                    style={styles.fieldInput}
+                  />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.fieldLabel}>
+                    {t.goalSavedLabel(currencyMeta.symbol)}
+                  </Text>
+                  <TextInput
+                    value={goalSaved}
+                    onChangeText={setGoalSaved}
+                    keyboardType="decimal-pad"
+                    placeholder="0"
+                    placeholderTextColor={Colors.textMuted}
+                    style={styles.fieldInput}
+                  />
+                </View>
+              </View>
+
+              <Text style={styles.fieldLabel}>{t.goalColorLabel}</Text>
+              <View style={styles.colorRow}>
+                {GOAL_COLORS.map((col) => (
+                  <Pressable
+                    key={col}
+                    onPress={() => setGoalColor(col)}
+                    style={[
+                      styles.colorDot,
+                      { backgroundColor: col },
+                      goalColor === col && styles.colorDotActive,
+                    ]}
+                  />
+                ))}
+              </View>
+
+              <Pressable onPress={handleCreateGoal} style={styles.createBtn}>
+                <Text style={styles.createBtnText}>{t.goalSaveBtn}</Text>
+              </Pressable>
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Contribute to Savings Goal Modal */}
+      <Modal
+        visible={contribGoal !== null}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setContribGoal(null)}
+      >
+        <View style={styles.modalBackdrop}>
+          <View style={styles.modalCard}>
+            <Text style={styles.modalTitle}>
+              {contribGoal ? t.goalContribTitle(contribGoal.title) : ''}
+            </Text>
+            <Text style={styles.modalSub}>{t.goalContribSub}</Text>
+            <View style={styles.euroRow}>
+              <Text style={styles.euroMark}>{currencyMeta.symbol}</Text>
+              <TextInput
+                value={contribInput}
+                onChangeText={setContribInput}
+                keyboardType="numbers-and-punctuation"
+                placeholder={currencyMeta.decimals === 0 ? '100000' : '100'}
+                placeholderTextColor={Colors.textMuted}
+                autoFocus
+                style={styles.modalInput}
+              />
+            </View>
+            <View style={styles.modalActions}>
+              <Pressable
+                onPress={() => setContribGoal(null)}
+                style={styles.cancelBtn}
+              >
+                <Text style={styles.cancelText}>{t.cancel}</Text>
+              </Pressable>
+              <Pressable onPress={handleContribute} style={styles.confirmBtn}>
+                <Text style={styles.confirmText}>{t.goalContribBtn}</Text>
+              </Pressable>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -397,6 +983,222 @@ const styles = StyleSheet.create({
     color: Colors.textSecondary,
     fontSize: 12,
     marginTop: 2,
+  },
+  sectionHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginTop: 6,
+  },
+  sectionTitle: {
+    color: Colors.text,
+    fontSize: 16,
+    fontWeight: '700',
+    marginTop: 6,
+  },
+  sectionLink: {
+    color: Colors.primary,
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  smallAddBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: Colors.primarySoft,
+    borderWidth: 1,
+    borderColor: Colors.primary,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 9,
+  },
+  smallAddText: {
+    color: Colors.primary,
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  primaryOutlineBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    backgroundColor: Colors.primarySoft,
+    borderWidth: 1,
+    borderColor: Colors.primary,
+    paddingVertical: 11,
+    borderRadius: 12,
+  },
+  primaryOutlineText: {
+    color: Colors.primary,
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  kpiStrip: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  kpiNum: {
+    color: Colors.text,
+    fontSize: 16,
+    fontWeight: '800',
+  },
+  kpiNumSmall: {
+    color: Colors.text,
+    fontSize: 13,
+    fontWeight: '800',
+  },
+  goalRow: {
+    gap: 8,
+    paddingVertical: 4,
+  },
+  goalDivider: {
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.border,
+    paddingBottom: 12,
+  },
+  goalTop: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  goalTitle: {
+    color: Colors.text,
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  goalSub: {
+    color: Colors.textSecondary,
+    fontSize: 12,
+    marginTop: 2,
+  },
+  contribBtn: {
+    backgroundColor: Colors.primarySoft,
+    borderWidth: 1,
+    borderColor: Colors.primary,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 8,
+  },
+  contribBtnText: {
+    color: Colors.primary,
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  trashMini: {
+    padding: 6,
+    backgroundColor: Colors.dangerSoft,
+    borderRadius: 8,
+  },
+  barTrack: {
+    height: 7,
+    backgroundColor: Colors.bg,
+    borderRadius: 99,
+    overflow: 'hidden',
+  },
+  barFill: {
+    height: '100%',
+    borderRadius: 99,
+  },
+  goalHint: {
+    color: Colors.textMuted,
+    fontSize: 11,
+    fontWeight: '600',
+  },
+  searchWrap: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingHorizontal: 11,
+    backgroundColor: Colors.bg,
+    borderRadius: 11,
+    borderWidth: 1,
+    borderColor: Colors.border,
+  },
+  searchInput: {
+    flex: 1,
+    color: Colors.text,
+    paddingVertical: 9,
+    fontSize: 13,
+  },
+  productChips: {
+    gap: 8,
+    paddingVertical: 2,
+  },
+  productChip: {
+    backgroundColor: Colors.bg,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    borderRadius: 10,
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+    maxWidth: 170,
+  },
+  productChipActive: {
+    borderColor: Colors.primary,
+    backgroundColor: Colors.primarySoft,
+  },
+  productChipName: {
+    color: Colors.text,
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  productChipMeta: {
+    color: Colors.textMuted,
+    fontSize: 10,
+    marginTop: 2,
+  },
+  priceDetailBox: {
+    gap: 10,
+  },
+  cheapestPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: Colors.primarySoft,
+    borderWidth: 1,
+    borderColor: Colors.primary,
+    borderRadius: 10,
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+  },
+  cheapestText: {
+    color: Colors.primary,
+    fontSize: 12,
+    fontWeight: '700',
+    flex: 1,
+  },
+  historyList: {
+    backgroundColor: Colors.bg,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    paddingHorizontal: 12,
+    paddingVertical: 4,
+  },
+  historyRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingVertical: 8,
+  },
+  historyBorder: {
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.border,
+  },
+  historyStore: {
+    color: Colors.text,
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  historyDate: {
+    color: Colors.textMuted,
+    fontSize: 11,
+    marginTop: 1,
+  },
+  historyPrice: {
+    color: Colors.text,
+    fontSize: 13,
+    fontWeight: '700',
   },
   highlightCard: {
     flexDirection: 'row',
@@ -431,12 +1233,6 @@ const styles = StyleSheet.create({
   highlightSub: {
     color: Colors.textSecondary,
     fontSize: 12,
-  },
-  sectionTitle: {
-    color: Colors.text,
-    fontSize: 16,
-    fontWeight: '700',
-    marginTop: 6,
   },
   tipCard: {
     backgroundColor: Colors.surface,
@@ -527,14 +1323,14 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: Colors.bg,
     borderRadius: 12,
-    padding: 12,
+    padding: 11,
     borderWidth: 1,
     borderColor: Colors.border,
     gap: 4,
   },
   simBoxLabel: {
     color: Colors.textMuted,
-    fontSize: 11,
+    fontSize: 10,
     fontWeight: '600',
   },
   simBoxVal: {
@@ -621,6 +1417,17 @@ const styles = StyleSheet.create({
     paddingVertical: 11,
     borderRadius: 12,
   },
+  restoreBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    backgroundColor: Colors.purpleSoft,
+    borderWidth: 1,
+    borderColor: Colors.purple,
+    paddingVertical: 11,
+    borderRadius: 12,
+  },
   backupBtnText: {
     color: Colors.primary,
     fontSize: 13,
@@ -641,5 +1448,148 @@ const styles = StyleSheet.create({
     color: Colors.danger,
     fontSize: 12,
     fontWeight: '700',
+  },
+  modalBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.72)',
+    justifyContent: 'center',
+    padding: 24,
+  },
+  modalCard: {
+    backgroundColor: Colors.surface,
+    borderRadius: 20,
+    padding: 20,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    gap: 12,
+  },
+  modalTitle: {
+    color: Colors.text,
+    fontSize: 18,
+    fontWeight: '700',
+  },
+  modalSub: {
+    color: Colors.textSecondary,
+    fontSize: 13,
+  },
+  euroRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: Colors.bg,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    paddingHorizontal: 14,
+  },
+  euroMark: {
+    color: Colors.primary,
+    fontSize: 22,
+    fontWeight: '800',
+    marginRight: 8,
+  },
+  modalInput: {
+    flex: 1,
+    color: Colors.text,
+    fontSize: 22,
+    fontWeight: '700',
+    paddingVertical: 12,
+  },
+  modalActions: {
+    flexDirection: 'row',
+    gap: 10,
+    marginTop: 6,
+  },
+  cancelBtn: {
+    flex: 1,
+    paddingVertical: 12,
+    borderRadius: 12,
+    backgroundColor: Colors.bg,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: Colors.border,
+  },
+  cancelText: {
+    color: Colors.textSecondary,
+    fontWeight: '600',
+  },
+  confirmBtn: {
+    flex: 1,
+    paddingVertical: 12,
+    borderRadius: 12,
+    backgroundColor: Colors.primary,
+    alignItems: 'center',
+  },
+  confirmText: {
+    color: Colors.white,
+    fontWeight: '700',
+  },
+  sheetBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.72)',
+    justifyContent: 'flex-end',
+  },
+  sheet: {
+    backgroundColor: Colors.surface,
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    maxHeight: '85%',
+    borderWidth: 1,
+    borderColor: Colors.border,
+  },
+  sheetHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    padding: 18,
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.border,
+  },
+  sheetBody: {
+    padding: 18,
+    paddingBottom: 32,
+    gap: 10,
+  },
+  fieldLabel: {
+    color: Colors.textSecondary,
+    fontSize: 12,
+    fontWeight: '600',
+    marginTop: 4,
+  },
+  fieldInput: {
+    backgroundColor: Colors.bg,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 11,
+    color: Colors.text,
+    fontSize: 14,
+  },
+  colorRow: {
+    flexDirection: 'row',
+    gap: 12,
+    paddingVertical: 6,
+  },
+  colorDot: {
+    width: 30,
+    height: 30,
+    borderRadius: 99,
+  },
+  colorDotActive: {
+    borderWidth: 3,
+    borderColor: Colors.white,
+    transform: [{ scale: 1.1 }],
+  },
+  createBtn: {
+    backgroundColor: Colors.primary,
+    paddingVertical: 14,
+    borderRadius: 14,
+    alignItems: 'center',
+    marginTop: 8,
+  },
+  createBtnText: {
+    color: Colors.white,
+    fontSize: 15,
+    fontWeight: '800',
   },
 });
