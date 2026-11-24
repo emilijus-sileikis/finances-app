@@ -1,8 +1,9 @@
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import {
   Alert,
   Image,
   KeyboardAvoidingView,
+  Modal,
   Platform,
   Pressable,
   ScrollView,
@@ -13,6 +14,7 @@ import {
 } from 'react-native';
 import * as Clipboard from 'expo-clipboard';
 import * as ImagePicker from 'expo-image-picker';
+import { useShareIntentContext } from 'expo-share-intent';
 import { Ionicons } from '@expo/vector-icons';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { ReceiptOcrWorker, type OcrJobPayload } from '@/components/ReceiptOcrWorker';
@@ -22,23 +24,33 @@ import {
   toEditableItems,
   type EditableReceiptItem,
 } from '@/components/ReceiptItemsEditor';
-import { CATEGORIES } from '@/constants/categories';
+import { CATEGORIES, getCategoryMeta } from '@/constants/categories';
 import { formatEditableAmount } from '@/constants/currencies';
 import { useFinances } from '@/db/FinanceContext';
 import { getCategoryLabel } from '@/i18n/translations';
+import { findPotentialDuplicate } from '@/services/duplicateGuard';
 import { parseReceiptText, suggestCategory } from '@/services/receiptParser';
+import { splitReceiptAmounts } from '@/services/receiptSplit';
 import {
   deleteReceiptFile,
   isPdfUri,
   openPdfReceipt,
   pickAndSavePdfReceipt,
+  readFileAsBase64,
   readReceiptAsDataUrl,
   saveReceiptFromBase64,
   saveReceiptFromUri,
 } from '@/services/receiptStorage';
 import { Colors } from '@/theme/colors';
-import type { CategoryId } from '@/types/finance';
+import type { CategoryId, QuickPreset } from '@/types/finance';
 import { getTodayIso, isValidIsoDate, parseFlexibleAmount } from '@/utils/format';
+
+interface SplitSnapshot {
+  amountText: string;
+  taxText: string;
+  draftItems: EditableReceiptItem[];
+  divisor: number;
+}
 
 export default function ScanScreen() {
   const {
@@ -47,10 +59,17 @@ export default function ScanScreen() {
     currency,
     currencyMeta,
     formatMoney,
+    expenses,
+    quickPresets,
     addExpense,
+    addQuickPreset,
+    removeQuickPreset,
+    logQuickPreset,
     merchantRules,
     setSelectedMonth,
   } = useFinances();
+
+  const { hasShareIntent, shareIntent, resetShareIntent } = useShareIntentContext();
   const ocrLang = currency === 'KRW' ? 'kor+eng' : currency === 'JPY' ? 'jpn+eng' : 'lit+eng';
 
   // Receipt file & OCR/PDF worker state
@@ -79,9 +98,22 @@ export default function ScanScreen() {
   const [notes, setNotes] = useState('');
   const [saving, setSaving] = useState(false);
 
+  // Receipt Split state
+  const [splitSnapshot, setSplitSnapshot] = useState<SplitSnapshot | null>(null);
+  const [showCustomSplit, setShowCustomSplit] = useState(false);
+  const [customSplitInput, setCustomSplitInput] = useState('');
+
+  // Quick-Add Preset modal & toast
+  const [showAddPreset, setShowAddPreset] = useState(false);
+  const [presetTitle, setPresetTitle] = useState('');
+  const [presetAmount, setPresetAmount] = useState('');
+  const [presetCategory, setPresetCategory] = useState<CategoryId>('dining');
+  const [quickToast, setQuickToast] = useState<string | null>(null);
+
   const applyParsedText = useCallback(
     (text: string) => {
       setRawText(text);
+      setSplitSnapshot(null);
       const parsed = parseReceiptText(text, merchantRules, currency);
 
       if (parsed.amount !== null) {
@@ -108,10 +140,11 @@ export default function ScanScreen() {
   );
 
   const startOcrForSavedImage = useCallback(
-    async (savedUri: string) => {
+    async (savedUri: string, customNotice?: string) => {
       setReceiptUri(savedUri);
       setPdfFileName(null);
-      setOcrNotice(null);
+      setSplitSnapshot(null);
+      setOcrNotice(customNotice ?? null);
       setOcrScanning(true);
       setOcrStatus(t.preparingImage);
       setOcrProgress(0.08);
@@ -130,6 +163,80 @@ export default function ScanScreen() {
     },
     [t, ocrLang]
   );
+
+  const startPdfJob = useCallback(
+    (savedUri: string, base64: string, fileName: string, customNotice?: string) => {
+      setReceiptUri(savedUri);
+      setPdfFileName(fileName);
+      setSplitSnapshot(null);
+      setOcrNotice(customNotice ?? null);
+      setOcrScanning(true);
+      setOcrStatus(t.preparingPdf);
+      setOcrProgress(0.1);
+      setOcrJob((prev) => ({
+        id: (prev?.id ?? 0) + 1,
+        kind: 'pdf',
+        data: base64,
+        ocrLang,
+      }));
+    },
+    [t, ocrLang]
+  );
+
+  // Receive files or text shared directly from Gmail, Gallery, Files, WhatsApp, etc.
+  useEffect(() => {
+    if (!hasShareIntent) return;
+
+    let cancelled = false;
+    (async () => {
+      try {
+        const sharedFile = shareIntent.files?.[0];
+        if (sharedFile?.path) {
+          const mime = (sharedFile.mimeType ?? '').toLowerCase();
+          const fileName = sharedFile.fileName || 'shared_receipt';
+          const isPdf = mime.includes('pdf') || fileName.toLowerCase().endsWith('.pdf');
+
+          if (isPdf) {
+            const savedUri = await saveReceiptFromUri(sharedFile.path, 'pdf');
+            const base64 = await readFileAsBase64(savedUri);
+            if (!cancelled) {
+              startPdfJob(savedUri, base64, fileName, t.sharedFileNotice);
+            }
+          } else {
+            const ext = mime.includes('png') ? 'png' : mime.includes('webp') ? 'webp' : 'jpg';
+            const savedUri = await saveReceiptFromUri(sharedFile.path, ext);
+            if (!cancelled) {
+              await startOcrForSavedImage(savedUri, t.sharedFileNotice);
+            }
+          }
+        } else if (shareIntent.text?.trim()) {
+          if (!cancelled) {
+            setShowRawText(true);
+            applyParsedText(shareIntent.text);
+            setOcrNotice(t.sharedTextNotice);
+          }
+        }
+      } catch {
+        if (!cancelled) {
+          setOcrNotice(t.alertPdfFailBody);
+        }
+      } finally {
+        resetShareIntent();
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    hasShareIntent,
+    shareIntent,
+    resetShareIntent,
+    startPdfJob,
+    startOcrForSavedImage,
+    applyParsedText,
+    t,
+  ]);
 
   const handleTakePhoto = async () => {
     const perm = await ImagePicker.requestCameraPermissionsAsync();
@@ -169,19 +276,7 @@ export default function ScanScreen() {
     try {
       const picked = await pickAndSavePdfReceipt();
       if (!picked) return;
-
-      setReceiptUri(picked.uri);
-      setPdfFileName(picked.name);
-      setOcrNotice(null);
-      setOcrScanning(true);
-      setOcrStatus(t.preparingPdf);
-      setOcrProgress(0.1);
-      setOcrJob((prev) => ({
-        id: (prev?.id ?? 0) + 1,
-        kind: 'pdf',
-        data: picked.base64,
-        ocrLang,
-      }));
+      startPdfJob(picked.uri, picked.base64, picked.name);
     } catch {
       setOcrScanning(false);
       Alert.alert(t.alertPdfFailTitle, t.alertPdfFailBody);
@@ -215,6 +310,94 @@ export default function ScanScreen() {
     } catch {
       Alert.alert(t.alertPasteFailTitle, t.alertPasteFailBody);
     }
+  };
+
+  // --- Quick-Add Presets ---
+
+  const handleTapPreset = async (preset: QuickPreset) => {
+    await logQuickPreset(preset);
+    setQuickToast(t.quickAddLoggedToast(preset.title, formatMoney(preset.amount)));
+    setTimeout(() => setQuickToast(null), 2600);
+  };
+
+  const handleDeletePreset = (preset: QuickPreset) => {
+    Alert.alert(t.quickAddDeleteTitle, t.quickAddDeleteBody(preset.title), [
+      { text: t.cancel, style: 'cancel' },
+      { text: t.delete, style: 'destructive', onPress: () => removeQuickPreset(preset.id) },
+    ]);
+  };
+
+  const handleCreatePreset = async () => {
+    const amt = parseFlexibleAmount(presetAmount);
+    if (!presetTitle.trim() || amt === null || amt <= 0) {
+      Alert.alert(t.alertAmountTitle, t.alertAmountBody);
+      return;
+    }
+    await addQuickPreset({
+      title: presetTitle.trim(),
+      amount: amt,
+      category: presetCategory,
+    });
+    setPresetTitle('');
+    setPresetAmount('');
+    setShowAddPreset(false);
+  };
+
+  // --- Receipt Split ---
+
+  const handleApplySplit = (divisor: number) => {
+    const baseAmountText = splitSnapshot ? splitSnapshot.amountText : amountText;
+    const baseTaxText = splitSnapshot ? splitSnapshot.taxText : taxText;
+    const baseItems = splitSnapshot ? splitSnapshot.draftItems : draftItems;
+
+    const amt = parseFlexibleAmount(baseAmountText);
+    if (amt === null || amt <= 0) return;
+
+    const tax = baseTaxText.trim() ? parseFlexibleAmount(baseTaxText) ?? 0 : 0;
+    const itemPrices = baseItems.map((it) => parseFlexibleAmount(it.priceText, true) ?? 0);
+
+    const result = splitReceiptAmounts({
+      amount: amt,
+      taxAmount: tax,
+      itemPrices,
+      divisor,
+      currency,
+    });
+
+    setSplitSnapshot({
+      amountText: baseAmountText,
+      taxText: baseTaxText,
+      draftItems: baseItems,
+      divisor,
+    });
+    setAmountText(formatEditableAmount(result.amount, currency));
+    if (tax > 0) {
+      setTaxText(formatEditableAmount(result.taxAmount, currency));
+    }
+    if (baseItems.length > 0) {
+      setDraftItems(
+        baseItems.map((it, idx) => ({
+          ...it,
+          priceText: formatEditableAmount(result.itemPrices[idx] ?? 0, currency),
+        }))
+      );
+    }
+  };
+
+  const handleUndoSplit = () => {
+    if (!splitSnapshot) return;
+    setAmountText(splitSnapshot.amountText);
+    setTaxText(splitSnapshot.taxText);
+    setDraftItems(splitSnapshot.draftItems);
+    setSplitSnapshot(null);
+  };
+
+  const handleCustomSplitSubmit = () => {
+    const num = Math.round(Number(customSplitInput.trim()));
+    if (!Number.isFinite(num) || num < 2 || num > 20) return;
+    handleApplySplit(num);
+    setCustomSplitInput('');
+    setShowCustomSplit(false);
   };
 
   const handleMerchantChange = (val: string) => {
@@ -255,7 +438,47 @@ export default function ScanScreen() {
     setCategoryHint(null);
     setCategoryManuallyPicked(false);
     setDraftItems([]);
+    setSplitSnapshot(null);
     setNotes('');
+  };
+
+  const commitExpense = async (
+    cleanTitle: string,
+    cleanMerchant: string,
+    parsedAmount: number,
+    parsedTax: number,
+    cleanDate: string
+  ) => {
+    setSaving(true);
+    try {
+      const splitNote = splitSnapshot ? `Split ÷${splitSnapshot.divisor}` : '';
+      const combinedNotes = [notes.trim(), splitNote].filter(Boolean).join(' • ');
+
+      await addExpense({
+        title: cleanTitle,
+        merchant: cleanMerchant,
+        amount: parsedAmount,
+        taxAmount: parsedTax,
+        category,
+        date: cleanDate,
+        notes: combinedNotes,
+        receiptUri,
+        rawOcrText: rawText.trim() || null,
+        items: fromEditableItems(draftItems),
+      });
+      setSelectedMonth(cleanDate.slice(0, 7));
+      Alert.alert(
+        t.alertSavedTitle,
+        t.alertSavedBody(
+          cleanTitle,
+          formatMoney(parsedAmount),
+          getCategoryLabel(category, language)
+        )
+      );
+      resetForm(false);
+    } finally {
+      setSaving(false);
+    }
   };
 
   const handleSave = async () => {
@@ -271,33 +494,42 @@ export default function ScanScreen() {
     const cleanTitle =
       title.trim() || cleanMerchant || getCategoryLabel(category, language);
 
-    setSaving(true);
-    try {
-      await addExpense({
-        title: cleanTitle,
-        merchant: cleanMerchant,
+    // Duplicate receipt guard
+    const duplicate = findPotentialDuplicate(
+      expenses,
+      {
         amount: parsedAmount,
-        taxAmount: parsedTax,
-        category,
         date: cleanDate,
-        notes: notes.trim(),
-        receiptUri,
-        rawOcrText: rawText.trim() || null,
-        items: fromEditableItems(draftItems),
-      });
-      setSelectedMonth(cleanDate.slice(0, 7));
+        merchant: cleanMerchant,
+        title: cleanTitle,
+      },
+      currency
+    );
+
+    if (duplicate) {
       Alert.alert(
-        t.alertSavedTitle,
-        t.alertSavedBody(
-          cleanTitle,
-          formatMoney(parsedAmount),
-          getCategoryLabel(category, language)
-        )
+        t.duplicateTitle,
+        t.duplicateBody(duplicate.title, formatMoney(duplicate.amount), duplicate.date),
+        [
+          { text: t.cancel, style: 'cancel' },
+          {
+            text: t.saveAnyway,
+            onPress: () => {
+              void commitExpense(
+                cleanTitle,
+                cleanMerchant,
+                parsedAmount,
+                parsedTax,
+                cleanDate
+              );
+            },
+          },
+        ]
       );
-      resetForm();
-    } finally {
-      setSaving(false);
+      return;
     }
+
+    await commitExpense(cleanTitle, cleanMerchant, parsedAmount, parsedTax, cleanDate);
   };
 
   const handleOcrProgress = useCallback((status: string, progress: number) => {
@@ -325,6 +557,7 @@ export default function ScanScreen() {
   }, []);
 
   const hasPdf = isPdfUri(receiptUri);
+  const currentParsedAmount = parseFlexibleAmount(amountText);
 
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
@@ -390,6 +623,62 @@ export default function ScanScreen() {
                 {t.imageOrText}
               </Text>
             </Pressable>
+          </View>
+
+          {/* 1-Tap Quick-Add Presets */}
+          <View style={styles.quickCard}>
+            <View style={styles.quickHeader}>
+              <View style={styles.quickTitleRow}>
+                <Ionicons name="flash-outline" size={14} color={Colors.primary} />
+                <Text style={styles.quickTitle}>{t.quickAddLabel}</Text>
+              </View>
+              <Pressable onPress={() => setShowAddPreset(true)} style={styles.quickNewBtn}>
+                <Ionicons name="add" size={14} color={Colors.primary} />
+                <Text style={styles.quickNewText}>{t.quickAddNewBtn}</Text>
+              </Pressable>
+            </View>
+
+            {quickToast && (
+              <View style={styles.quickToast}>
+                <Ionicons name="checkmark-circle" size={15} color={Colors.primary} />
+                <Text style={styles.quickToastText}>{quickToast}</Text>
+              </View>
+            )}
+
+            {quickPresets.length === 0 ? (
+              <Text style={styles.quickEmpty}>{t.quickAddEmpty}</Text>
+            ) : (
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                contentContainerStyle={styles.quickChipsRow}
+              >
+                {quickPresets.map((preset) => {
+                  const meta = getCategoryMeta(preset.category);
+                  return (
+                    <Pressable
+                      key={preset.id}
+                      onPress={() => handleTapPreset(preset)}
+                      onLongPress={() => handleDeletePreset(preset)}
+                      style={styles.quickChip}
+                    >
+                      <Ionicons name={meta.icon} size={14} color={meta.color} />
+                      <Text style={styles.quickChipTitle}>{preset.title}</Text>
+                      <Text style={styles.quickChipAmt}>{formatMoney(preset.amount)}</Text>
+                      <Pressable
+                        onPress={(e) => {
+                          e.stopPropagation();
+                          handleDeletePreset(preset);
+                        }}
+                        hitSlop={6}
+                      >
+                        <Ionicons name="close" size={13} color={Colors.textMuted} />
+                      </Pressable>
+                    </Pressable>
+                  );
+                })}
+              </ScrollView>
+            )}
           </View>
 
           {/* Receipt Preview (Image or PDF) */}
@@ -519,7 +808,10 @@ export default function ScanScreen() {
                   <Text style={styles.euroSign}>{currencyMeta.symbol}</Text>
                   <TextInput
                     value={amountText}
-                    onChangeText={setAmountText}
+                    onChangeText={(val) => {
+                      setAmountText(val);
+                      if (splitSnapshot) setSplitSnapshot(null);
+                    }}
                     keyboardType="decimal-pad"
                     placeholder={currencyMeta.decimals === 0 ? '0' : '0.00'}
                     placeholderTextColor={Colors.textMuted}
@@ -544,6 +836,45 @@ export default function ScanScreen() {
                 </View>
               </View>
             </View>
+
+            {/* Receipt Split Bar (visible whenever an amount is entered) */}
+            {currentParsedAmount !== null && currentParsedAmount > 0 && (
+              <View style={styles.splitRow}>
+                {splitSnapshot ? (
+                  <>
+                    <View style={styles.splitAppliedPill}>
+                      <Ionicons name="people-outline" size={13} color={Colors.accent} />
+                      <Text style={styles.splitAppliedText}>
+                        {t.splitApplied(splitSnapshot.divisor)}
+                      </Text>
+                    </View>
+                    <Pressable onPress={handleUndoSplit} style={styles.splitUndoBtn}>
+                      <Ionicons name="arrow-undo-outline" size={13} color={Colors.text} />
+                      <Text style={styles.splitUndoText}>{t.splitUndo}</Text>
+                    </Pressable>
+                  </>
+                ) : (
+                  <>
+                    <Text style={styles.splitLabel}>{t.splitLabel}</Text>
+                    {[2, 3, 4].map((n) => (
+                      <Pressable
+                        key={n}
+                        onPress={() => handleApplySplit(n)}
+                        style={styles.splitBtn}
+                      >
+                        <Text style={styles.splitBtnText}>÷{n}</Text>
+                      </Pressable>
+                    ))}
+                    <Pressable
+                      onPress={() => setShowCustomSplit(true)}
+                      style={styles.splitBtn}
+                    >
+                      <Text style={styles.splitBtnText}>{t.splitCustom}</Text>
+                    </Pressable>
+                  </>
+                )}
+              </View>
+            )}
 
             <Text style={styles.label}>{t.merchantLabel}</Text>
             <TextInput
@@ -623,7 +954,7 @@ export default function ScanScreen() {
             <ReceiptItemsEditor
               items={draftItems}
               onChange={setDraftItems}
-              receiptTotal={parseFlexibleAmount(amountText)}
+              receiptTotal={currentParsedAmount}
               onApplyItemsSum={(sum) => setAmountText(formatEditableAmount(sum, currency))}
             />
 
@@ -650,6 +981,121 @@ export default function ScanScreen() {
           </View>
         </ScrollView>
       </KeyboardAvoidingView>
+
+      {/* Add Quick-Add Preset Modal */}
+      <Modal
+        visible={showAddPreset}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setShowAddPreset(false)}
+      >
+        <View style={styles.modalBackdrop}>
+          <View style={styles.modalSheet}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>{t.quickAddModalTitle}</Text>
+              <Pressable onPress={() => setShowAddPreset(false)}>
+                <Ionicons name="close" size={22} color={Colors.text} />
+              </Pressable>
+            </View>
+
+            <ScrollView contentContainerStyle={styles.modalBody}>
+              <Text style={styles.label}>{t.titleLabel} *</Text>
+              <TextInput
+                value={presetTitle}
+                onChangeText={setPresetTitle}
+                placeholder={t.quickAddTitlePlaceholder}
+                placeholderTextColor={Colors.textMuted}
+                style={styles.input}
+              />
+
+              <Text style={styles.label}>{t.amountLabel(currencyMeta.symbol)} *</Text>
+              <TextInput
+                value={presetAmount}
+                onChangeText={setPresetAmount}
+                keyboardType="decimal-pad"
+                placeholder={currencyMeta.decimals === 0 ? '4500' : '3.50'}
+                placeholderTextColor={Colors.textMuted}
+                style={styles.input}
+              />
+
+              <Text style={styles.label}>{t.categoryLabel}</Text>
+              <View style={styles.catGrid}>
+                {CATEGORIES.map((c) => {
+                  const selected = presetCategory === c.id;
+                  return (
+                    <Pressable
+                      key={c.id}
+                      onPress={() => setPresetCategory(c.id)}
+                      style={[
+                        styles.catChip,
+                        selected && {
+                          borderColor: c.color,
+                          backgroundColor: `${c.color}24`,
+                        },
+                      ]}
+                    >
+                      <Ionicons
+                        name={c.icon}
+                        size={14}
+                        color={selected ? c.color : Colors.textSecondary}
+                      />
+                      <Text
+                        style={[
+                          styles.catChipText,
+                          selected && { color: Colors.text, fontWeight: '700' },
+                        ]}
+                      >
+                        {getCategoryLabel(c.id, language)}
+                      </Text>
+                    </Pressable>
+                  );
+                })}
+              </View>
+
+              <Pressable onPress={handleCreatePreset} style={styles.saveBtn}>
+                <Text style={styles.saveBtnText}>{t.quickAddSaveBtn}</Text>
+              </Pressable>
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Custom Split Divisor Modal */}
+      <Modal
+        visible={showCustomSplit}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowCustomSplit(false)}
+      >
+        <View style={styles.centerBackdrop}>
+          <View style={styles.centerCard}>
+            <Text style={styles.modalTitle}>{t.splitCustomTitle}</Text>
+            <TextInput
+              value={customSplitInput}
+              onChangeText={setCustomSplitInput}
+              keyboardType="number-pad"
+              placeholder={t.splitCustomPlaceholder}
+              placeholderTextColor={Colors.textMuted}
+              autoFocus
+              style={styles.input}
+            />
+            <View style={styles.modalBtnRow}>
+              <Pressable
+                onPress={() => setShowCustomSplit(false)}
+                style={styles.modalCancelBtn}
+              >
+                <Text style={styles.modalCancelText}>{t.cancel}</Text>
+              </Pressable>
+              <Pressable
+                onPress={handleCustomSplitSubmit}
+                style={styles.modalConfirmBtn}
+              >
+                <Text style={styles.modalConfirmText}>{t.splitApplyBtn}</Text>
+              </Pressable>
+            </View>
+          </View>
+        </View>
+      </Modal>
 
       {/* Hidden on-device Tesseract.js + PDF.js worker */}
       <ReceiptOcrWorker
@@ -733,6 +1179,89 @@ const styles = StyleSheet.create({
     color: Colors.textMuted,
     fontSize: 10,
     marginTop: 2,
+  },
+  quickCard: {
+    backgroundColor: Colors.surface,
+    borderRadius: 16,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    gap: 8,
+  },
+  quickHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  quickTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  quickTitle: {
+    color: Colors.text,
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  quickNewBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
+    backgroundColor: Colors.primarySoft,
+    borderWidth: 1,
+    borderColor: Colors.primary,
+    paddingHorizontal: 9,
+    paddingVertical: 4,
+    borderRadius: 8,
+  },
+  quickNewText: {
+    color: Colors.primary,
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  quickToast: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: Colors.primarySoft,
+    borderRadius: 9,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+  },
+  quickToastText: {
+    color: Colors.primary,
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  quickEmpty: {
+    color: Colors.textMuted,
+    fontSize: 11,
+    lineHeight: 16,
+  },
+  quickChipsRow: {
+    gap: 8,
+    paddingVertical: 2,
+  },
+  quickChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: Colors.bg,
+    borderWidth: 1,
+    borderColor: Colors.borderLight,
+    borderRadius: 99,
+    paddingHorizontal: 11,
+    paddingVertical: 7,
+  },
+  quickChipTitle: {
+    color: Colors.text,
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  quickChipAmt: {
+    color: Colors.primary,
+    fontSize: 12,
+    fontWeight: '800',
   },
   pdfPreviewCard: {
     flexDirection: 'row',
@@ -914,6 +1443,61 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     gap: 10,
   },
+  splitRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    flexWrap: 'wrap',
+  },
+  splitLabel: {
+    color: Colors.textMuted,
+    fontSize: 12,
+    fontWeight: '600',
+    marginRight: 2,
+  },
+  splitBtn: {
+    backgroundColor: Colors.bg,
+    borderWidth: 1,
+    borderColor: Colors.borderLight,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 8,
+  },
+  splitBtnText: {
+    color: Colors.accent,
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  splitAppliedPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    backgroundColor: Colors.accentSoft,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 8,
+  },
+  splitAppliedText: {
+    color: Colors.accent,
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  splitUndoBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: Colors.bg,
+    borderWidth: 1,
+    borderColor: Colors.borderLight,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 8,
+  },
+  splitUndoText: {
+    color: Colors.text,
+    fontSize: 12,
+    fontWeight: '600',
+  },
   row: {
     flexDirection: 'row',
     gap: 10,
@@ -1004,5 +1588,78 @@ const styles = StyleSheet.create({
     color: Colors.white,
     fontSize: 16,
     fontWeight: '800',
+  },
+  modalBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.72)',
+    justifyContent: 'flex-end',
+  },
+  modalSheet: {
+    backgroundColor: Colors.surface,
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    maxHeight: '85%',
+    borderWidth: 1,
+    borderColor: Colors.border,
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    padding: 18,
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.border,
+  },
+  modalTitle: {
+    color: Colors.text,
+    fontSize: 17,
+    fontWeight: '700',
+  },
+  modalBody: {
+    padding: 18,
+    paddingBottom: 32,
+    gap: 10,
+  },
+  centerBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.7)',
+    justifyContent: 'center',
+    padding: 24,
+  },
+  centerCard: {
+    backgroundColor: Colors.surface,
+    borderRadius: 20,
+    padding: 20,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    gap: 14,
+  },
+  modalBtnRow: {
+    flexDirection: 'row',
+    gap: 10,
+  },
+  modalCancelBtn: {
+    flex: 1,
+    paddingVertical: 12,
+    borderRadius: 12,
+    backgroundColor: Colors.bg,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    alignItems: 'center',
+  },
+  modalCancelText: {
+    color: Colors.textSecondary,
+    fontWeight: '600',
+  },
+  modalConfirmBtn: {
+    flex: 1,
+    paddingVertical: 12,
+    borderRadius: 12,
+    backgroundColor: Colors.primary,
+    alignItems: 'center',
+  },
+  modalConfirmText: {
+    color: Colors.white,
+    fontWeight: '700',
   },
 });

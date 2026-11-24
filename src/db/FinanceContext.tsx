@@ -2,13 +2,16 @@ import React, { createContext, useCallback, useContext, useEffect, useMemo, useS
 import {
   clearAllData,
   deleteExpense,
+  deleteQuickPreset,
   deleteRecurring,
   fetchAllBudgets,
   fetchAllExpenses,
+  fetchAllQuickPresets,
   fetchAllRecurring,
   fetchMerchantRules,
   getAppSetting,
   insertExpense,
+  insertQuickPreset,
   insertRecurring,
   logRecurringForCurrentPeriod,
   processDueAutoRecurring,
@@ -33,11 +36,17 @@ import type {
   Expense,
   MerchantRule,
   NewExpenseInput,
+  NewQuickPresetInput,
   NewRecurringInput,
+  QuickPreset,
   RecurringExpense,
   UpdateExpenseInput,
 } from '@/types/finance';
-import { getCurrentMonthKey, getCurrentPeriodKey } from '@/utils/format';
+import {
+  getCurrentMonthKey,
+  getCurrentPeriodKey,
+  getTodayIso,
+} from '@/utils/format';
 
 interface FinanceContextValue {
   ready: boolean;
@@ -52,6 +61,7 @@ interface FinanceContextValue {
   budgets: CategoryBudget[];
   recurring: RecurringExpense[];
   merchantRules: MerchantRule[];
+  quickPresets: QuickPreset[];
   selectedMonth: string;
   setSelectedMonth: (monthKey: string) => void;
   autoLoggedBannerCount: number;
@@ -67,6 +77,9 @@ interface FinanceContextValue {
   setRecurringActive: (id: number, active: boolean) => Promise<void>;
   setRecurringAutoLog: (id: number, autoLog: boolean) => Promise<void>;
   removeRecurring: (id: number) => Promise<void>;
+  addQuickPreset: (input: NewQuickPresetInput) => Promise<number>;
+  removeQuickPreset: (id: number) => Promise<void>;
+  logQuickPreset: (preset: QuickPreset) => Promise<number>;
   resetAllData: () => Promise<void>;
 }
 
@@ -80,20 +93,23 @@ export function FinanceProvider({ children }: { children: React.ReactNode }) {
   const [budgets, setBudgets] = useState<CategoryBudget[]>([]);
   const [recurring, setRecurring] = useState<RecurringExpense[]>([]);
   const [merchantRules, setMerchantRules] = useState<MerchantRule[]>([]);
+  const [quickPresets, setQuickPresets] = useState<QuickPreset[]>([]);
   const [selectedMonth, setSelectedMonth] = useState<string>(getCurrentMonthKey());
   const [autoLoggedBannerCount, setAutoLoggedBannerCount] = useState(0);
 
   const refresh = useCallback(async () => {
-    const [expRows, budgetRows, recRows, ruleRows] = await Promise.all([
+    const [expRows, budgetRows, recRows, ruleRows, presetRows] = await Promise.all([
       fetchAllExpenses(),
       fetchAllBudgets(),
       fetchAllRecurring(),
       fetchMerchantRules(),
+      fetchAllQuickPresets(),
     ]);
     setExpenses(expRows);
     setBudgets(budgetRows);
     setRecurring(recRows);
     setMerchantRules(ruleRows);
+    setQuickPresets(presetRows);
   }, []);
 
   useEffect(() => {
@@ -237,6 +253,40 @@ export function FinanceProvider({ children }: { children: React.ReactNode }) {
     [refresh]
   );
 
+  const addQuickPreset = useCallback(
+    async (input: NewQuickPresetInput) => {
+      const id = await insertQuickPreset(input);
+      await refresh();
+      return id;
+    },
+    [refresh]
+  );
+
+  const removeQuickPreset = useCallback(
+    async (id: number) => {
+      await deleteQuickPreset(id);
+      await refresh();
+    },
+    [refresh]
+  );
+
+  const logQuickPreset = useCallback(
+    async (preset: QuickPreset) => {
+      const today = getTodayIso();
+      const id = await insertExpense({
+        title: preset.title,
+        merchant: preset.merchant || preset.title,
+        amount: preset.amount,
+        category: preset.category,
+        date: today,
+      });
+      setSelectedMonth(today.slice(0, 7));
+      await refresh();
+      return id;
+    },
+    [refresh]
+  );
+
   const resetAllData = useCallback(async () => {
     for (const exp of expenses) {
       if (exp.receiptUri) deleteReceiptFile(exp.receiptUri);
@@ -265,6 +315,7 @@ export function FinanceProvider({ children }: { children: React.ReactNode }) {
       budgets,
       recurring,
       merchantRules,
+      quickPresets,
       selectedMonth,
       setSelectedMonth,
       autoLoggedBannerCount,
@@ -280,6 +331,9 @@ export function FinanceProvider({ children }: { children: React.ReactNode }) {
       setRecurringActive,
       setRecurringAutoLog,
       removeRecurring,
+      addQuickPreset,
+      removeQuickPreset,
+      logQuickPreset,
       resetAllData,
     }),
     [
@@ -295,6 +349,7 @@ export function FinanceProvider({ children }: { children: React.ReactNode }) {
       budgets,
       recurring,
       merchantRules,
+      quickPresets,
       selectedMonth,
       autoLoggedBannerCount,
       dismissAutoLoggedBanner,
@@ -309,6 +364,9 @@ export function FinanceProvider({ children }: { children: React.ReactNode }) {
       setRecurringActive,
       setRecurringAutoLog,
       removeRecurring,
+      addQuickPreset,
+      removeQuickPreset,
+      logQuickPreset,
       resetAllData,
     ]
   );

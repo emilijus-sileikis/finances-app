@@ -132,6 +132,30 @@ const EN = {
   alertSavedBody: (title: string, amt: string, cat: string) =>
     `${title} (${amt}) added to ${cat}.`,
 
+  // Release 1: Quick-Add, Split, Duplicate Guard, Share Intent
+  quickAddLabel: 'Quick-Add',
+  quickAddNewBtn: 'Preset',
+  quickAddEmpty: 'Save frequent buys (e.g. Coffee, Lunch, Parking) for 1-tap logging.',
+  quickAddModalTitle: 'New Quick-Add Preset',
+  quickAddTitlePlaceholder: 'e.g. Morning Coffee, Lunch, Parking',
+  quickAddSaveBtn: 'Save Preset',
+  quickAddLoggedToast: (title: string, amt: string) => `Logged ${title} (${amt})!`,
+  quickAddDeleteTitle: 'Remove preset?',
+  quickAddDeleteBody: (title: string) => `Delete "${title}" quick-add button?`,
+  splitLabel: 'Split:',
+  splitCustom: 'Other',
+  splitApplied: (n: number) => `Split ÷${n} applied`,
+  splitUndo: 'Undo',
+  splitCustomTitle: 'Split receipt by how many people?',
+  splitCustomPlaceholder: 'e.g. 5',
+  splitApplyBtn: 'Split',
+  duplicateTitle: 'Possible duplicate receipt',
+  duplicateBody: (title: string, amt: string, date: string) =>
+    `You already logged "${title}" (${amt}) on ${date}. Save anyway?`,
+  saveAnyway: 'Save Anyway',
+  sharedFileNotice: 'Imported from Android Share — scanning receipt...',
+  sharedTextNotice: 'Parsed shared receipt text!',
+
   // Expenses screen
   expensesTitle: 'Expenses',
   expensesSub: 'Tap any item to inspect receipt or edit',
@@ -353,6 +377,30 @@ const LT: TranslationSet = {
   alertSavedTitle: 'Išsaugota!',
   alertSavedBody: (title: string, amt: string, cat: string) =>
     `${title} (${amt}) pridėta į „${cat}“.`,
+
+  // Release 1: Quick-Add, Split, Duplicate Guard, Share Intent
+  quickAddLabel: 'Greitas įrašas',
+  quickAddNewBtn: 'Naujas',
+  quickAddEmpty: 'Išsaugokite dažnus pirkinius (pvz., Kava, Pietūs, Parkavimas) 1 paspaudimui.',
+  quickAddModalTitle: 'Naujas greitas įrašas',
+  quickAddTitlePlaceholder: 'pvz., Kava, Pietūs, Parkavimas',
+  quickAddSaveBtn: 'Išsaugoti',
+  quickAddLoggedToast: (title: string, amt: string) => `Įrašyta: ${title} (${amt})!`,
+  quickAddDeleteTitle: 'Pašalinti greitą įrašą?',
+  quickAddDeleteBody: (title: string) => `Ištrinti „${title}“ mygtuką?`,
+  splitLabel: 'Dalinti:',
+  splitCustom: 'Kita',
+  splitApplied: (n: number) => `Padalinta ÷${n}`,
+  splitUndo: 'Atšaukti',
+  splitCustomTitle: 'Keliems žmonėms padalinti čekį?',
+  splitCustomPlaceholder: 'pvz., 5',
+  splitApplyBtn: 'Dalinti',
+  duplicateTitle: 'Galimas čekio dublikatas',
+  duplicateBody: (title: string, amt: string, date: string) =>
+    `Jau turite įrašą „${title}“ (${amt}) ${date}. Vis tiek išsaugoti?`,
+  saveAnyway: 'Vis tiek išsaugoti',
+  sharedFileNotice: 'Gauta per „Bendrinti“ — skenuojamas čekis...',
+  sharedTextNotice: 'Bendrintas čekio tekstas atpažintas!',
 
   // Expenses screen
   expensesTitle: 'Išlaidos',

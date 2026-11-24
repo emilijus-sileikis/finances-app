@@ -120,6 +120,21 @@ export interface MerchantRule {
   updatedAt: string;
 }
 
+export interface QuickPreset {
+  id: number;
+  title: string;
+  merchant: string;
+  amount: number;
+  category: CategoryId;
+}
+
+export interface NewQuickPresetInput {
+  title: string;
+  merchant?: string;
+  amount: number;
+  category: CategoryId;
+}
+
 export interface ParsedReceipt {
   merchant: string;
   amount: number | null;

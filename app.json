@@ -3,7 +3,7 @@
     "name": "Finances",
     "slug": "finances",
     "scheme": "finances",
-    "version": "1.0.0",
+    "version": "1.1.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "dark",
@@ -40,6 +40,13 @@
         {
           "photosPermission": "Allow Finances to pick receipt and tax photos from your gallery.",
           "cameraPermission": "Allow Finances to take photos of receipts and tax documents."
+        }
+      ],
+      [
+        "expo-share-intent",
+        {
+          "disableIOS": true,
+          "androidIntentFilters": ["image/*", "application/pdf", "text/*"]
         }
       ]
     ],

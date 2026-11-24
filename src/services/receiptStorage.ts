@@ -16,17 +16,32 @@ export function isPdfUri(uri: string | null | undefined): boolean {
   return uri.toLowerCase().split('?')[0].endsWith('.pdf');
 }
 
-export async function saveReceiptFromUri(sourceUri: string): Promise<string> {
+export async function saveReceiptFromUri(sourceUri: string, forcedExt?: string): Promise<string> {
   const receiptsDir = getReceiptsDir();
-  const extMatch = sourceUri.match(/\.([a-zA-Z0-9]+)(?:\?|$)/);
-  const ext = extMatch ? extMatch[1].toLowerCase() : 'jpg';
+  const normalizedUri =
+    sourceUri.startsWith('file://') || sourceUri.startsWith('content://')
+      ? sourceUri
+      : `file://${sourceUri}`;
+  const extMatch = normalizedUri.match(/\.([a-zA-Z0-9]+)(?:\?|$)/);
+  const ext = (forcedExt ?? (extMatch ? extMatch[1] : 'jpg')).toLowerCase();
   const safeExt = ['jpg', 'jpeg', 'png', 'webp', 'pdf'].includes(ext) ? ext : 'jpg';
   const filename = `receipt_${Date.now()}_${Math.floor(Math.random() * 1000)}.${safeExt}`;
 
-  const sourceFile = new File(sourceUri);
+  const sourceFile = new File(normalizedUri);
   const destFile = new File(receiptsDir, filename);
-  await sourceFile.copy(destFile, { overwrite: true });
+  try {
+    await sourceFile.copy(destFile, { overwrite: true });
+  } catch {
+    // Fallback for Android content:// URIs that cannot be copied directly
+    const base64 = await sourceFile.base64();
+    await destFile.write(base64, { encoding: 'base64' });
+  }
   return destFile.uri;
+}
+
+export async function readFileAsBase64(uri: string): Promise<string> {
+  const file = new File(uri);
+  return file.base64();
 }
 
 export async function saveReceiptFromBase64(base64Data: string, ext = 'png'): Promise<string> {

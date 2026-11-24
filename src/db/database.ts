@@ -7,7 +7,9 @@ import type {
   MerchantRule,
   NewExpenseInput,
   NewExpenseItemInput,
+  NewQuickPresetInput,
   NewRecurringInput,
+  QuickPreset,
   RecurringExpense,
   RecurringFrequency,
   UpdateExpenseInput,
@@ -85,6 +87,14 @@ async function initSchema(db: SQLite.SQLiteDatabase): Promise<void> {
     CREATE TABLE IF NOT EXISTS app_settings (
       key TEXT PRIMARY KEY,
       value TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS quick_presets (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      title TEXT NOT NULL,
+      merchant TEXT NOT NULL DEFAULT '',
+      amount REAL NOT NULL,
+      category TEXT NOT NULL DEFAULT 'other'
     );
   `);
 }
@@ -556,6 +566,48 @@ export async function upsertMerchantRule(
   );
 }
 
+// --- Quick-Add Presets ---
+
+interface QuickPresetRow {
+  id: number;
+  title: string;
+  merchant: string;
+  amount: number;
+  category: string;
+}
+
+export async function fetchAllQuickPresets(): Promise<QuickPreset[]> {
+  const db = await getDb();
+  const rows = await db.getAllAsync<QuickPresetRow>(
+    'SELECT * FROM quick_presets ORDER BY id ASC'
+  );
+  return rows.map((r) => ({
+    id: r.id,
+    title: r.title,
+    merchant: r.merchant,
+    amount: r.amount,
+    category: r.category as CategoryId,
+  }));
+}
+
+export async function insertQuickPreset(input: NewQuickPresetInput): Promise<number> {
+  const db = await getDb();
+  const res = await db.runAsync(
+    `INSERT INTO quick_presets (title, merchant, amount, category)
+     VALUES (?, ?, ?, ?)`,
+    input.title.trim(),
+    (input.merchant ?? input.title).trim(),
+    Math.round(input.amount * 100) / 100,
+    input.category
+  );
+  return res.lastInsertRowId;
+}
+
+export async function deleteQuickPreset(id: number): Promise<void> {
+  const db = await getDb();
+  await db.runAsync('DELETE FROM quick_presets WHERE id = ?', id);
+}
+
 // --- Reset ---
 
 export async function clearAllData(): Promise<void> {
@@ -566,6 +618,7 @@ export async function clearAllData(): Promise<void> {
     DELETE FROM budgets;
     DELETE FROM recurring_expenses;
     DELETE FROM merchant_rules;
+    DELETE FROM quick_presets;
   `);
 }
 
