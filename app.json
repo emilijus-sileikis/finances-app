@@ -3,7 +3,7 @@
     "name": "Finances",
     "slug": "finances",
     "scheme": "finances",
-    "version": "1.2.0",
+    "version": "1.3.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "dark",
@@ -47,6 +47,12 @@
         {
           "disableIOS": true,
           "androidIntentFilters": ["image/*", "application/pdf", "text/*"]
+        }
+      ],
+      [
+        "expo-local-authentication",
+        {
+          "faceIDPermission": "Allow Finances to unlock with Face ID."
         }
       ]
     ],

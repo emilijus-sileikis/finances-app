@@ -2,17 +2,21 @@ import React, { createContext, useCallback, useContext, useEffect, useMemo, useS
 import {
   addAmountToSavingsGoal,
   clearAllData,
+  deleteCustomCategory,
   deleteExpense,
+  deleteMerchantRule,
   deleteQuickPreset,
   deleteRecurring,
   deleteSavingsGoal,
   fetchAllBudgets,
+  fetchAllCustomCategories,
   fetchAllExpenses,
   fetchAllQuickPresets,
   fetchAllRecurring,
   fetchAllSavingsGoals,
   fetchMerchantRules,
   getAppSetting,
+  insertCustomCategory,
   insertExpense,
   insertQuickPreset,
   insertRecurring,
@@ -25,7 +29,13 @@ import {
   toggleRecurringAutoLog,
   updateExpense,
   upsertBudget,
+  upsertMerchantRule,
 } from '@/db/database';
+import {
+  CATEGORIES,
+  customCategoryToMeta,
+  getCategoryMeta,
+} from '@/constants/categories';
 import type { ValidatedBackupPayload } from '@/services/backupRestore';
 import {
   formatCurrency,
@@ -34,13 +44,21 @@ import {
   type CurrencyCode,
   type CurrencyMeta,
 } from '@/constants/currencies';
-import { TRANSLATIONS, type Language, type TranslationSet } from '@/i18n/translations';
+import {
+  getCategoryLabel,
+  TRANSLATIONS,
+  type Language,
+  type TranslationSet,
+} from '@/i18n/translations';
 import { deleteReceiptFile } from '@/services/receiptStorage';
 import type {
   CategoryBudget,
   CategoryId,
+  CategoryMeta,
+  CustomCategory,
   Expense,
   MerchantRule,
+  NewCustomCategoryInput,
   NewExpenseInput,
   NewQuickPresetInput,
   NewRecurringInput,
@@ -67,6 +85,15 @@ interface FinanceContextValue {
   formatMoney: (amount: number, showDecimals?: boolean) => string;
   monthlyIncome: number;
   setMonthlyIncome: (amount: number) => Promise<void>;
+  biometricLockEnabled: boolean;
+  setBiometricLockEnabled: (enabled: boolean) => Promise<void>;
+  appLocked: boolean;
+  setAppLocked: (locked: boolean) => void;
+  customCategories: CustomCategory[];
+  customCategoryMetas: CategoryMeta[];
+  allCategories: CategoryMeta[];
+  resolveCategoryMeta: (id: string) => CategoryMeta;
+  resolveCategoryLabel: (id: CategoryId) => string;
   expenses: Expense[];
   budgets: CategoryBudget[];
   recurring: RecurringExpense[];
@@ -94,6 +121,10 @@ interface FinanceContextValue {
   addSavingsGoal: (input: NewSavingsGoalInput) => Promise<number>;
   contributeToGoal: (id: number, delta: number) => Promise<void>;
   removeSavingsGoal: (id: number) => Promise<void>;
+  addCustomCategory: (input: NewCustomCategoryInput) => Promise<string>;
+  removeCustomCategory: (id: string) => Promise<void>;
+  saveMerchantRule: (merchantKey: string, category: CategoryId) => Promise<void>;
+  removeMerchantRule: (merchantKey: string) => Promise<void>;
   importBackup: (
     payload: ValidatedBackupPayload,
     mode: 'replace' | 'merge'
@@ -108,6 +139,9 @@ export function FinanceProvider({ children }: { children: React.ReactNode }) {
   const [language, setLanguageState] = useState<Language>('en');
   const [currency, setCurrencyState] = useState<CurrencyCode>('EUR');
   const [monthlyIncome, setMonthlyIncomeState] = useState<number>(0);
+  const [biometricLockEnabled, setBiometricLockEnabledState] = useState<boolean>(false);
+  const [appLocked, setAppLocked] = useState<boolean>(false);
+  const [customCategories, setCustomCategories] = useState<CustomCategory[]>([]);
   const [expenses, setExpenses] = useState<Expense[]>([]);
   const [budgets, setBudgets] = useState<CategoryBudget[]>([]);
   const [recurring, setRecurring] = useState<RecurringExpense[]>([]);
@@ -118,7 +152,7 @@ export function FinanceProvider({ children }: { children: React.ReactNode }) {
   const [autoLoggedBannerCount, setAutoLoggedBannerCount] = useState(0);
 
   const refresh = useCallback(async () => {
-    const [expRows, budgetRows, recRows, ruleRows, presetRows, goalRows] =
+    const [expRows, budgetRows, recRows, ruleRows, presetRows, goalRows, catRows] =
       await Promise.all([
         fetchAllExpenses(),
         fetchAllBudgets(),
@@ -126,6 +160,7 @@ export function FinanceProvider({ children }: { children: React.ReactNode }) {
         fetchMerchantRules(),
         fetchAllQuickPresets(),
         fetchAllSavingsGoals(),
+        fetchAllCustomCategories(),
       ]);
     setExpenses(expRows);
     setBudgets(budgetRows);
@@ -133,16 +168,18 @@ export function FinanceProvider({ children }: { children: React.ReactNode }) {
     setMerchantRules(ruleRows);
     setQuickPresets(presetRows);
     setSavingsGoals(goalRows);
+    setCustomCategories(catRows);
   }, []);
 
   useEffect(() => {
     let active = true;
     (async () => {
       try {
-        const [savedLang, savedCurrency, savedIncome] = await Promise.all([
+        const [savedLang, savedCurrency, savedIncome, savedLock] = await Promise.all([
           getAppSetting('language'),
           getAppSetting('currency'),
           getAppSetting('monthly_income'),
+          getAppSetting('biometric_lock_enabled'),
         ]);
         if (active && (savedLang === 'en' || savedLang === 'lt')) {
           setLanguageState(savedLang);
@@ -155,6 +192,10 @@ export function FinanceProvider({ children }: { children: React.ReactNode }) {
           if (Number.isFinite(parsedInc) && parsedInc >= 0) {
             setMonthlyIncomeState(parsedInc);
           }
+        }
+        if (active && savedLock === '1') {
+          setBiometricLockEnabledState(true);
+          setAppLocked(true);
         }
         const logged = await processDueAutoRecurring();
         if (active && logged > 0) {
@@ -187,6 +228,34 @@ export function FinanceProvider({ children }: { children: React.ReactNode }) {
     setMonthlyIncomeState(safe);
     await setAppSetting('monthly_income', String(safe));
   }, []);
+
+  const setBiometricLockEnabled = useCallback(async (enabled: boolean) => {
+    setBiometricLockEnabledState(enabled);
+    if (!enabled) {
+      setAppLocked(false);
+    }
+    await setAppSetting('biometric_lock_enabled', enabled ? '1' : '0');
+  }, []);
+
+  const customCategoryMetas = useMemo(
+    () => customCategories.map(customCategoryToMeta),
+    [customCategories]
+  );
+
+  const allCategories = useMemo(
+    () => [...CATEGORIES, ...customCategoryMetas],
+    [customCategoryMetas]
+  );
+
+  const resolveCategoryMeta = useCallback(
+    (id: string) => getCategoryMeta(id, customCategoryMetas),
+    [customCategoryMetas]
+  );
+
+  const resolveCategoryLabel = useCallback(
+    (id: CategoryId) => getCategoryLabel(id, language, customCategoryMetas),
+    [language, customCategoryMetas]
+  );
 
   const currencyMeta = useMemo(() => getCurrencyMeta(currency), [currency]);
 
@@ -348,6 +417,39 @@ export function FinanceProvider({ children }: { children: React.ReactNode }) {
     [refresh]
   );
 
+  const addCustomCategory = useCallback(
+    async (input: NewCustomCategoryInput) => {
+      const id = await insertCustomCategory(input);
+      await refresh();
+      return id;
+    },
+    [refresh]
+  );
+
+  const removeCustomCategory = useCallback(
+    async (id: string) => {
+      await deleteCustomCategory(id);
+      await refresh();
+    },
+    [refresh]
+  );
+
+  const saveMerchantRule = useCallback(
+    async (merchantKey: string, category: CategoryId) => {
+      await upsertMerchantRule(merchantKey, category);
+      await refresh();
+    },
+    [refresh]
+  );
+
+  const removeMerchantRule = useCallback(
+    async (merchantKey: string) => {
+      await deleteMerchantRule(merchantKey);
+      await refresh();
+    },
+    [refresh]
+  );
+
   const importBackup = useCallback(
     async (payload: ValidatedBackupPayload, mode: 'replace' | 'merge') => {
       const res = await restoreBackupToDb(payload, mode);
@@ -389,6 +491,15 @@ export function FinanceProvider({ children }: { children: React.ReactNode }) {
       formatMoney,
       monthlyIncome,
       setMonthlyIncome,
+      biometricLockEnabled,
+      setBiometricLockEnabled,
+      appLocked,
+      setAppLocked,
+      customCategories,
+      customCategoryMetas,
+      allCategories,
+      resolveCategoryMeta,
+      resolveCategoryLabel,
       expenses,
       budgets,
       recurring,
@@ -416,6 +527,10 @@ export function FinanceProvider({ children }: { children: React.ReactNode }) {
       addSavingsGoal,
       contributeToGoal,
       removeSavingsGoal,
+      addCustomCategory,
+      removeCustomCategory,
+      saveMerchantRule,
+      removeMerchantRule,
       importBackup,
       resetAllData,
     }),
@@ -430,6 +545,15 @@ export function FinanceProvider({ children }: { children: React.ReactNode }) {
       formatMoney,
       monthlyIncome,
       setMonthlyIncome,
+      biometricLockEnabled,
+      setBiometricLockEnabled,
+      appLocked,
+      setAppLocked,
+      customCategories,
+      customCategoryMetas,
+      allCategories,
+      resolveCategoryMeta,
+      resolveCategoryLabel,
       expenses,
       budgets,
       recurring,
@@ -456,6 +580,10 @@ export function FinanceProvider({ children }: { children: React.ReactNode }) {
       addSavingsGoal,
       contributeToGoal,
       removeSavingsGoal,
+      addCustomCategory,
+      removeCustomCategory,
+      saveMerchantRule,
+      removeMerchantRule,
       importBackup,
       resetAllData,
     ]

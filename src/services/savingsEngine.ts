@@ -8,6 +8,7 @@ import { getCategoryLabel, type Language } from '@/i18n/translations';
 import type {
   CategoryBudget,
   CategoryId,
+  CategoryMeta,
   Expense,
   RecurringExpense,
   SavingsTip,
@@ -81,9 +82,12 @@ export function computeMonthlyTrend(
   return result;
 }
 
-export function computeDiscretionaryTotal(monthExpenses: Expense[]): number {
+export function computeDiscretionaryTotal(
+  monthExpenses: Expense[],
+  customCategories: CategoryMeta[] = []
+): number {
   return monthExpenses.reduce((sum, e) => {
-    const meta = getCategoryMeta(e.category);
+    const meta = getCategoryMeta(e.category, customCategories);
     return meta.isDiscretionary ? sum + Number(e.amount) : sum;
   }, 0);
 }
@@ -94,7 +98,8 @@ export function generateSavingsTips(
   recurring: RecurringExpense[],
   monthKey: string,
   lang: Language = 'en',
-  currency: CurrencyCode = 'EUR'
+  currency: CurrencyCode = 'EUR',
+  customCategories: CategoryMeta[] = []
 ): SavingsTip[] {
   const isLt = lang === 'lt';
   const curMeta = getCurrencyMeta(currency);
@@ -136,7 +141,7 @@ export function generateSavingsTips(
   // 1. Over-budget & Pace warnings
   for (const item of catTotals) {
     if (!item.budget || item.budget <= 0) continue;
-    const label = getCategoryLabel(item.category, lang);
+    const label = getCategoryLabel(item.category, lang, customCategories);
 
     if (item.total > item.budget) {
       const over = item.total - item.budget;
@@ -181,7 +186,7 @@ export function generateSavingsTips(
     if (prev >= 20 * scale && item.total > prev * 1.3 && item.total - prev >= 20 * scale) {
       const diff = item.total - prev;
       const pct = Math.round(((item.total - prev) / prev) * 100);
-      const label = getCategoryLabel(item.category, lang);
+      const label = getCategoryLabel(item.category, lang, customCategories);
       tips.push({
         id: `spike-${item.category}`,
         severity: 'medium',
@@ -198,14 +203,14 @@ export function generateSavingsTips(
   }
 
   // 3. Discretionary share analysis
-  const discretionaryTotal = computeDiscretionaryTotal(monthExpenses);
+  const discretionaryTotal = computeDiscretionaryTotal(monthExpenses, customCategories);
   const discretionaryShare = discretionaryTotal / totalSpent;
   if (discretionaryTotal >= 60 * scale && discretionaryShare >= 0.22) {
     const trim20 = discretionaryTotal * 0.2;
     const topDisc = catTotals
-      .filter((c) => getCategoryMeta(c.category).isDiscretionary)
+      .filter((c) => getCategoryMeta(c.category, customCategories).isDiscretionary)
       .slice(0, 2)
-      .map((c) => getCategoryLabel(c.category, lang))
+      .map((c) => getCategoryLabel(c.category, lang, customCategories))
       .join(' & ');
     tips.push({
       id: 'discretionary-share',
@@ -223,7 +228,7 @@ export function generateSavingsTips(
   // 4. Small impulse purchases
   const smallCap = Math.round(18 * scale);
   const smallDiscretionary = monthExpenses.filter(
-    (e) => e.amount <= smallCap && getCategoryMeta(e.category).isDiscretionary
+    (e) => e.amount <= smallCap && getCategoryMeta(e.category, customCategories).isDiscretionary
   );
   const smallSum = smallDiscretionary.reduce((s, e) => s + Number(e.amount), 0);
   if (smallDiscretionary.length >= 4 && smallSum >= 35 * scale) {
@@ -243,7 +248,7 @@ export function generateSavingsTips(
 
   // 5. Optional recurring bills audit
   const optionalRecurring = recurring.filter(
-    (r) => r.active && getCategoryMeta(r.category).isDiscretionary
+    (r) => r.active && getCategoryMeta(r.category, customCategories).isDiscretionary
   );
   const optionalRecurringMonthly = optionalRecurring.reduce((sum, r) => {
     if (r.frequency === 'weekly') return sum + r.amount * 4.33;
@@ -269,7 +274,7 @@ export function generateSavingsTips(
     (c) => c.budget === null && c.total >= 50 * scale && c.category !== 'other'
   );
   if (unbudgetedTop) {
-    const label = getCategoryLabel(unbudgetedTop.category, lang);
+    const label = getCategoryLabel(unbudgetedTop.category, lang, customCategories);
     const step = curMeta.decimals === 0 ? Math.max(1000, Math.round(10 * scale)) : 10;
     const suggestedCap = Math.ceil((unbudgetedTop.total * 0.9) / step) * step;
     tips.push({
@@ -302,6 +307,10 @@ export function generateSavingsTips(
   return tips.sort((a, b) => order[a.severity] - order[b.severity]);
 }
 
-export function getDiscretionaryCategories(): CategoryId[] {
-  return CATEGORIES.filter((c) => c.isDiscretionary).map((c) => c.id);
+export function getDiscretionaryCategories(
+  customCategories: CategoryMeta[] = []
+): CategoryId[] {
+  return [...CATEGORIES, ...customCategories]
+    .filter((c) => c.isDiscretionary)
+    .map((c) => c.id);
 }

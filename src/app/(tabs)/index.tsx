@@ -13,9 +13,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { DonutChart } from '@/components/DonutChart';
 import { ExpenseDetailModal } from '@/components/ExpenseDetailModal';
-import { getCategoryMeta } from '@/constants/categories';
 import { useFinances } from '@/db/FinanceContext';
-import { getCategoryLabel } from '@/i18n/translations';
 import { isPdfUri } from '@/services/receiptStorage';
 import { computeCategoryTotals, getMonthExpenses } from '@/services/savingsEngine';
 import { Colors } from '@/theme/colors';
@@ -37,6 +35,8 @@ export default function OverviewScreen() {
     currency,
     formatMoney,
     monthlyIncome,
+    resolveCategoryMeta,
+    resolveCategoryLabel,
     expenses,
     budgets,
     selectedMonth,
@@ -120,15 +120,15 @@ export default function OverviewScreen() {
   const donutSlices = useMemo(
     () =>
       categoryTotals.map((ct) => {
-        const meta = getCategoryMeta(ct.category);
+        const meta = resolveCategoryMeta(ct.category);
         return {
           key: ct.category,
-          label: getCategoryLabel(ct.category, language),
+          label: resolveCategoryLabel(ct.category),
           value: ct.total,
           color: meta.color,
         };
       }),
-    [categoryTotals, language]
+    [categoryTotals, resolveCategoryMeta, resolveCategoryLabel]
   );
 
   const prevMonthSpent = useMemo(() => {
@@ -236,7 +236,7 @@ export default function OverviewScreen() {
                 <View style={{ flex: 1 }}>
                   <Text style={styles.dueItemTitle}>{item.title}</Text>
                   <Text style={styles.dueItemSub}>
-                    {getCategoryLabel(item.category, language)} • {formatMoney(item.amount)}
+                    {resolveCategoryLabel(item.category)} • {formatMoney(item.amount)}
                   </Text>
                 </View>
                 <Pressable
@@ -388,8 +388,8 @@ export default function OverviewScreen() {
                 <Text style={styles.mutedCenter}>{t.noExpensesMonth}</Text>
               ) : (
                 categoryTotals.map((item, idx) => {
-                  const meta = getCategoryMeta(item.category);
-                  const catLabel = getCategoryLabel(item.category, language);
+                  const meta = resolveCategoryMeta(item.category);
+                  const catLabel = resolveCategoryLabel(item.category);
                   const pct = Math.round(item.share * 100);
                   const budgetRatio =
                     item.budget && item.budget > 0 ? item.total / item.budget : null;
@@ -561,7 +561,7 @@ export default function OverviewScreen() {
                 <Text style={styles.mutedCenter}>{t.tapScanHint}</Text>
               ) : (
                 monthExpenses.slice(0, 6).map((exp, idx) => {
-                  const meta = getCategoryMeta(exp.category);
+                  const meta = resolveCategoryMeta(exp.category);
                   const expIsPdf = isPdfUri(exp.receiptUri);
                   return (
                     <Pressable
@@ -580,7 +580,7 @@ export default function OverviewScreen() {
                           {exp.title}
                         </Text>
                         <Text style={styles.txSub}>
-                          {getCategoryLabel(exp.category, language)} •{' '}
+                          {resolveCategoryLabel(exp.category)} •{' '}
                           {formatDisplayDate(exp.date, language)}
                           {exp.receiptUri
                             ? ` • ${expIsPdf ? t.pdfTag : t.receiptTag}`

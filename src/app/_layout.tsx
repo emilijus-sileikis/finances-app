@@ -4,6 +4,7 @@ import { router, Stack } from 'expo-router';
 import { ShareIntentProvider, useShareIntentContext } from 'expo-share-intent';
 import { StatusBar } from 'expo-status-bar';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
+import { BiometricLockGate } from '@/components/BiometricLockGate';
 import { FinanceProvider } from '@/db/FinanceContext';
 import { Colors } from '@/theme/colors';
 
@@ -26,16 +27,18 @@ export default function RootLayout() {
     <ShareIntentProvider options={{ disabled: isExpoGo, resetOnBackground: true }}>
       <SafeAreaProvider>
         <FinanceProvider>
-          <ShareIntentNavigator />
-          <StatusBar style="light" />
-          <Stack
-            screenOptions={{
-              headerShown: false,
-              contentStyle: { backgroundColor: Colors.bg },
-            }}
-          >
-            <Stack.Screen name="(tabs)" />
-          </Stack>
+          <BiometricLockGate>
+            <ShareIntentNavigator />
+            <StatusBar style="light" />
+            <Stack
+              screenOptions={{
+                headerShown: false,
+                contentStyle: { backgroundColor: Colors.bg },
+              }}
+            >
+              <Stack.Screen name="(tabs)" />
+            </Stack>
+          </BiometricLockGate>
         </FinanceProvider>
       </SafeAreaProvider>
     </ShareIntentProvider>

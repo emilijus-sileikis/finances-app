@@ -12,9 +12,7 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { ExpenseDetailModal } from '@/components/ExpenseDetailModal';
-import { CATEGORIES, getCategoryMeta } from '@/constants/categories';
 import { useFinances } from '@/db/FinanceContext';
-import { getCategoryLabel } from '@/i18n/translations';
 import { analyzeProductPrices } from '@/services/priceHistory';
 import { exportExpensesCsv, isPdfUri } from '@/services/receiptStorage';
 import { getMonthExpenses } from '@/services/savingsEngine';
@@ -32,6 +30,9 @@ export default function ExpensesScreen() {
     t,
     currency,
     formatMoney,
+    allCategories,
+    resolveCategoryMeta,
+    resolveCategoryLabel,
     expenses,
     selectedMonth,
     setSelectedMonth,
@@ -214,7 +215,7 @@ export default function ExpensesScreen() {
               {t.all}
             </Text>
           </Pressable>
-          {CATEGORIES.map((c) => {
+          {allCategories.map((c) => {
             const active = selectedCategory === c.id;
             return (
               <Pressable
@@ -231,7 +232,7 @@ export default function ExpensesScreen() {
                   color={active ? c.color : Colors.textSecondary}
                 />
                 <Text style={[styles.chipText, active && { color: Colors.text }]}>
-                  {getCategoryLabel(c.id, language)}
+                  {resolveCategoryLabel(c.id)}
                 </Text>
               </Pressable>
             );
@@ -257,7 +258,7 @@ export default function ExpensesScreen() {
           </View>
         }
         renderItem={({ item }) => {
-          const meta = getCategoryMeta(item.category);
+          const meta = resolveCategoryMeta(item.category);
           const itemIsPdf = isPdfUri(item.receiptUri);
           const hasLineItems = item.items.length > 0;
           const hasMatchingLineItem =
@@ -277,7 +278,7 @@ export default function ExpensesScreen() {
                   </Text>
                   <View style={styles.metaRow}>
                     <Text style={styles.rowSub}>
-                      {getCategoryLabel(item.category, language)} •{' '}
+                      {resolveCategoryLabel(item.category)} •{' '}
                       {formatDisplayDate(item.date, language)}
                     </Text>
                     {item.receiptUri && (

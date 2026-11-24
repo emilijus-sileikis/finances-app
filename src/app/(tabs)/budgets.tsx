@@ -12,9 +12,7 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { CATEGORIES, getCategoryMeta } from '@/constants/categories';
 import { useFinances } from '@/db/FinanceContext';
-import { getCategoryLabel } from '@/i18n/translations';
 import { getMonthExpenses } from '@/services/savingsEngine';
 import { Colors } from '@/theme/colors';
 import type { CategoryId, RecurringFrequency } from '@/types/finance';
@@ -31,6 +29,9 @@ export default function BudgetsScreen() {
     currency,
     currencyMeta,
     formatMoney,
+    allCategories,
+    resolveCategoryMeta,
+    resolveCategoryLabel,
     expenses,
     budgets,
     recurring,
@@ -255,7 +256,7 @@ export default function BudgetsScreen() {
             </Text>
           </View>
 
-          {CATEGORIES.map((cat) => {
+          {allCategories.map((cat) => {
             const limit = budgetByCat.get(cat.id) ?? 0;
             const spent = spentByCat.get(cat.id) ?? 0;
             const ratio = limit > 0 ? spent / limit : 0;
@@ -280,7 +281,7 @@ export default function BudgetsScreen() {
                   </View>
                   <View style={{ flex: 1 }}>
                     <Text style={styles.budgetCatName}>
-                      {getCategoryLabel(cat.id, language)}
+                      {resolveCategoryLabel(cat.id)}
                     </Text>
                     <Text style={styles.budgetSpentText}>
                       {limit > 0
@@ -348,7 +349,7 @@ export default function BudgetsScreen() {
             </View>
           ) : (
             recurring.map((item) => {
-              const meta = getCategoryMeta(item.category);
+              const meta = resolveCategoryMeta(item.category);
               const currentPeriod = getCurrentPeriodKey(item.frequency);
               const alreadyLogged = item.lastLoggedPeriod === currentPeriod;
 
@@ -364,7 +365,7 @@ export default function BudgetsScreen() {
                     <View style={{ flex: 1 }}>
                       <Text style={styles.budgetCatName}>{item.title}</Text>
                       <Text style={styles.budgetSpentText}>
-                        {getCategoryLabel(item.category, language)} •{' '}
+                        {resolveCategoryLabel(item.category)} •{' '}
                         {freqLabel(item.frequency)}
                         {item.frequency === 'monthly'
                           ? ` (${t.dayLabel(item.dayOfMonth)})`
@@ -441,9 +442,7 @@ export default function BudgetsScreen() {
           <View style={styles.modalCard}>
             <Text style={styles.modalTitle}>
               {editingBudgetCat
-                ? t.monthlyBudgetModalTitle(
-                    getCategoryLabel(editingBudgetCat, language)
-                  )
+                ? t.monthlyBudgetModalTitle(resolveCategoryLabel(editingBudgetCat))
                 : ''}
             </Text>
             <Text style={styles.modalSub}>{t.monthlyBudgetModalSub(currency)}</Text>
@@ -556,7 +555,7 @@ export default function BudgetsScreen() {
 
               <Text style={styles.fieldLabel}>{t.categoryLabel}</Text>
               <View style={styles.catGrid}>
-                {CATEGORIES.map((c) => {
+                {allCategories.map((c) => {
                   const selected = recCategory === c.id;
                   return (
                     <Pressable
@@ -581,7 +580,7 @@ export default function BudgetsScreen() {
                           selected && { color: Colors.text, fontWeight: '700' },
                         ]}
                       >
-                        {getCategoryLabel(c.id, language)}
+                        {resolveCategoryLabel(c.id)}
                       </Text>
                     </Pressable>
                   );

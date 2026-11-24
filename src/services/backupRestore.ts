@@ -1,8 +1,10 @@
-import { CATEGORY_MAP } from '@/constants/categories';
+import { CATEGORY_MAP, CUSTOM_CATEGORY_ICONS } from '@/constants/categories';
 import { isCurrencyCode, type CurrencyCode } from '@/constants/currencies';
 import type {
   CategoryBudget,
   CategoryId,
+  CustomCategory,
+  IoniconName,
   NewExpenseInput,
   NewExpenseItemInput,
   NewQuickPresetInput,
@@ -10,11 +12,13 @@ import type {
   NewSavingsGoalInput,
   RecurringFrequency,
 } from '@/types/finance';
-import { getTodayIso, isValidIsoDate } from '@/utils/format';
+import { getTodayIso, isValidIsoDate, normalizeMerchantKey } from '@/utils/format';
 
 export interface ValidatedBackupPayload {
   currency?: CurrencyCode;
   monthlyIncome?: number;
+  customCategories: CustomCategory[];
+  merchantRules: { merchantKey: string; category: CategoryId }[];
   expenses: NewExpenseInput[];
   budgets: CategoryBudget[];
   recurring: NewRecurringInput[];
@@ -22,8 +26,8 @@ export interface ValidatedBackupPayload {
   savingsGoals: NewSavingsGoalInput[];
 }
 
-function asValidCategory(val: unknown): CategoryId {
-  if (typeof val === 'string' && val in CATEGORY_MAP) {
+function asValidCategory(val: unknown, validCustomIds: Set<string>): CategoryId {
+  if (typeof val === 'string' && (val in CATEGORY_MAP || validCustomIds.has(val))) {
     return val as CategoryId;
   }
   return 'other';
@@ -73,6 +77,34 @@ export function parseBackupJson(rawText: string): ValidatedBackupPayload {
       ? Math.max(0, asFiniteNumber(obj.monthlyIncome, 0))
       : undefined;
 
+  const customCategories: CustomCategory[] = [];
+  const validCustomIds = new Set<string>();
+  const iconSet = new Set<string>(CUSTOM_CATEGORY_ICONS);
+  if (Array.isArray(obj.customCategories)) {
+    for (const raw of obj.customCategories) {
+      if (!raw || typeof raw !== 'object') continue;
+      const c = raw as Record<string, unknown>;
+      const id = typeof c.id === 'string' ? c.id.trim() : '';
+      const label = typeof c.label === 'string' ? c.label.trim() : '';
+      if (!id || !label || id in CATEGORY_MAP || validCustomIds.has(id)) continue;
+      const icon = (
+        typeof c.icon === 'string' && iconSet.has(c.icon) ? c.icon : 'pricetag-outline'
+      ) as IoniconName;
+      const color =
+        typeof c.color === 'string' && /^#[0-9a-fA-F]{6}$/.test(c.color)
+          ? c.color
+          : '#10B981';
+      customCategories.push({
+        id,
+        label,
+        icon,
+        color,
+        isDiscretionary: Boolean(c.isDiscretionary),
+      });
+      validCustomIds.add(id);
+    }
+  }
+
   const expenses: NewExpenseInput[] = [];
   if (Array.isArray(obj.expenses)) {
     for (const raw of obj.expenses) {
@@ -110,7 +142,7 @@ export function parseBackupJson(rawText: string): ValidatedBackupPayload {
         merchant,
         amount,
         taxAmount: Math.max(0, asFiniteNumber(e.taxAmount, 0)),
-        category: asValidCategory(e.category),
+        category: asValidCategory(e.category, validCustomIds),
         date: dateStr,
         notes: typeof e.notes === 'string' ? e.notes : '',
         rawOcrText: typeof e.rawOcrText === 'string' ? e.rawOcrText : null,
@@ -127,7 +159,7 @@ export function parseBackupJson(rawText: string): ValidatedBackupPayload {
       const limit = asFiniteNumber(b.monthlyLimit, 0);
       if (limit > 0) {
         budgets.push({
-          category: asValidCategory(b.category),
+          category: asValidCategory(b.category, validCustomIds),
           monthlyLimit: limit,
         });
       }
@@ -147,7 +179,7 @@ export function parseBackupJson(rawText: string): ValidatedBackupPayload {
         title,
         merchant: typeof r.merchant === 'string' ? r.merchant.trim() : title,
         amount,
-        category: asValidCategory(r.category),
+        category: asValidCategory(r.category, validCustomIds),
         frequency: asValidFrequency(r.frequency),
         dayOfMonth: day,
         autoLog: Boolean(r.autoLog),
@@ -168,7 +200,7 @@ export function parseBackupJson(rawText: string): ValidatedBackupPayload {
         title,
         merchant: typeof p.merchant === 'string' ? p.merchant.trim() : title,
         amount,
-        category: asValidCategory(p.category),
+        category: asValidCategory(p.category, validCustomIds),
       });
     }
   }
@@ -194,9 +226,26 @@ export function parseBackupJson(rawText: string): ValidatedBackupPayload {
     }
   }
 
+  const merchantRules: { merchantKey: string; category: CategoryId }[] = [];
+  if (Array.isArray(obj.merchantRules)) {
+    for (const raw of obj.merchantRules) {
+      if (!raw || typeof raw !== 'object') continue;
+      const m = raw as Record<string, unknown>;
+      const key =
+        typeof m.merchantKey === 'string' ? normalizeMerchantKey(m.merchantKey) : '';
+      if (key.length < 2) continue;
+      merchantRules.push({
+        merchantKey: key,
+        category: asValidCategory(m.category, validCustomIds),
+      });
+    }
+  }
+
   return {
     currency,
     monthlyIncome,
+    customCategories,
+    merchantRules,
     expenses,
     budgets,
     recurring,

@@ -24,10 +24,8 @@ import {
   toEditableItems,
   type EditableReceiptItem,
 } from '@/components/ReceiptItemsEditor';
-import { CATEGORIES, getCategoryMeta } from '@/constants/categories';
 import { formatEditableAmount } from '@/constants/currencies';
 import { useFinances } from '@/db/FinanceContext';
-import { getCategoryLabel } from '@/i18n/translations';
 import { findPotentialDuplicate } from '@/services/duplicateGuard';
 import { parseReceiptText, suggestCategory } from '@/services/receiptParser';
 import { splitReceiptAmounts } from '@/services/receiptSplit';
@@ -54,11 +52,13 @@ interface SplitSnapshot {
 
 export default function ScanScreen() {
   const {
-    language,
     t,
     currency,
     currencyMeta,
     formatMoney,
+    allCategories,
+    resolveCategoryMeta,
+    resolveCategoryLabel,
     expenses,
     quickPresets,
     addExpense,
@@ -133,10 +133,10 @@ export default function ScanScreen() {
       setCategory(parsed.category);
       setCategoryManuallyPicked(false);
       setCategoryHint(
-        t.autoSorted(getCategoryLabel(parsed.category, language), parsed.matchedHint)
+        t.autoSorted(resolveCategoryLabel(parsed.category), parsed.matchedHint)
       );
     },
-    [merchantRules, language, t, currency]
+    [merchantRules, resolveCategoryLabel, t, currency]
   );
 
   const startOcrForSavedImage = useCallback(
@@ -408,7 +408,7 @@ export default function ScanScreen() {
         setCategory(suggestion.category);
         setCategoryHint(
           t.autoSorted(
-            getCategoryLabel(suggestion.category, language),
+            resolveCategoryLabel(suggestion.category),
             suggestion.matchedHint
           )
         );
@@ -472,7 +472,7 @@ export default function ScanScreen() {
         t.alertSavedBody(
           cleanTitle,
           formatMoney(parsedAmount),
-          getCategoryLabel(category, language)
+          resolveCategoryLabel(category)
         )
       );
       resetForm(false);
@@ -492,7 +492,7 @@ export default function ScanScreen() {
     const cleanDate = isValidIsoDate(date) ? date.trim() : getTodayIso();
     const cleanMerchant = merchant.trim();
     const cleanTitle =
-      title.trim() || cleanMerchant || getCategoryLabel(category, language);
+      title.trim() || cleanMerchant || resolveCategoryLabel(category);
 
     // Duplicate receipt guard
     const duplicate = findPotentialDuplicate(
@@ -654,7 +654,7 @@ export default function ScanScreen() {
                 contentContainerStyle={styles.quickChipsRow}
               >
                 {quickPresets.map((preset) => {
-                  const meta = getCategoryMeta(preset.category);
+                  const meta = resolveCategoryMeta(preset.category);
                   return (
                     <Pressable
                       key={preset.id}
@@ -914,7 +914,7 @@ export default function ScanScreen() {
             </View>
 
             <View style={styles.catGrid}>
-              {CATEGORIES.map((c) => {
+              {allCategories.map((c) => {
                 const selected = category === c.id;
                 return (
                   <Pressable
@@ -943,7 +943,7 @@ export default function ScanScreen() {
                         selected && { color: Colors.text, fontWeight: '700' },
                       ]}
                     >
-                      {getCategoryLabel(c.id, language)}
+                      {resolveCategoryLabel(c.id)}
                     </Text>
                   </Pressable>
                 );
@@ -1020,7 +1020,7 @@ export default function ScanScreen() {
 
               <Text style={styles.label}>{t.categoryLabel}</Text>
               <View style={styles.catGrid}>
-                {CATEGORIES.map((c) => {
+                {allCategories.map((c) => {
                   const selected = presetCategory === c.id;
                   return (
                     <Pressable
@@ -1045,7 +1045,7 @@ export default function ScanScreen() {
                           selected && { color: Colors.text, fontWeight: '700' },
                         ]}
                       >
-                        {getCategoryLabel(c.id, language)}
+                        {resolveCategoryLabel(c.id)}
                       </Text>
                     </Pressable>
                   );

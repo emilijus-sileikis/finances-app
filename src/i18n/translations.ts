@@ -1,8 +1,8 @@
-import type { CategoryId } from '@/types/finance';
+import type { BuiltInCategoryId, CategoryId, CategoryMeta } from '@/types/finance';
 
 export type Language = 'en' | 'lt';
 
-export const CATEGORY_LABELS: Record<Language, Record<CategoryId, string>> = {
+export const CATEGORY_LABELS: Record<Language, Record<BuiltInCategoryId, string>> = {
   en: {
     groceries: 'Groceries',
     mortgage: 'Mortgage & Rent',
@@ -33,8 +33,16 @@ export const CATEGORY_LABELS: Record<Language, Record<CategoryId, string>> = {
   },
 };
 
-export function getCategoryLabel(id: CategoryId, lang: Language): string {
-  return CATEGORY_LABELS[lang][id] ?? CATEGORY_LABELS[lang].other;
+export function getCategoryLabel(
+  id: CategoryId,
+  lang: Language,
+  customCategories: CategoryMeta[] = []
+): string {
+  const builtIn = (CATEGORY_LABELS[lang] as Record<string, string>)[id];
+  if (builtIn) return builtIn;
+  const custom = customCategories.find((c) => c.id === id);
+  if (custom) return custom.label;
+  return CATEGORY_LABELS[lang].other;
 }
 
 const EN = {
@@ -335,6 +343,49 @@ const EN = {
       ? `Imported ${imported} expenses (${skipped} duplicates skipped).`
       : `Successfully imported ${imported} expenses.`,
   restoreFailTitle: 'Restore Failed',
+
+  // Custom Categories, Merchant Rules & Biometric Lock (v1.3)
+  customCatsTitle: 'Custom Categories',
+  addCustomCatBtn: 'New',
+  customCatsEmpty: 'Create your own categories like Pets, Travel, Coffee, or Gym.',
+  catDiscretionaryTag: 'Discretionary (Wants)',
+  catEssentialTag: 'Essential (Needs)',
+  customCatModalTitle: 'New Custom Category',
+  customCatNameLabel: 'Category Name',
+  customCatNamePlaceholder: 'e.g. Pets, Travel, Coffee',
+  customCatNameRequired: 'Please enter a category name.',
+  customCatIconLabel: 'Icon',
+  customCatDiscretionaryLabel: 'Count as discretionary (wants)',
+  customCatDiscretionaryDesc: 'Included in savings coach tips & what-if simulator',
+  customCatSaveBtn: 'Create Category',
+  deleteCustomCatTitle: 'Delete custom category?',
+  deleteCustomCatBody: (name: string) =>
+    `Remove "${name}"? Existing expenses in this category will be moved to Other.`,
+  merchantRulesTitle: 'Learned Merchant Rules',
+  addRuleBtn: 'Add Rule',
+  merchantRulesSub: 'Finances auto-sorts receipts using these rules. Tap a category to change it.',
+  merchantRulesEmpty: 'Rules are learned automatically when you save receipts, or you can add one now.',
+  showAllRules: (n: number) => `Show all ${n} rules`,
+  showLessRules: 'Show fewer',
+  ruleModalTitle: 'New Merchant Rule',
+  ruleEditTitle: 'Change Rule Category',
+  ruleMerchantLabel: 'Merchant Keyword',
+  ruleMerchantPlaceholder: 'e.g. rimi, steam, wolt',
+  ruleMerchantRequired: 'Enter at least 2 characters for the merchant keyword.',
+  ruleSaveBtn: 'Save Rule',
+  deleteRuleTitle: 'Delete merchant rule?',
+  deleteRuleBody: (key: string) => `Stop auto-sorting "${key}" with this rule?`,
+  securitySectionTitle: 'Privacy & App Lock',
+  biometricLockTitle: 'Fingerprint / Face Lock',
+  biometricLockDesc: 'Require biometrics or device PIN when opening Finances',
+  biometricUnavailableTitle: 'Biometrics Unavailable',
+  biometricUnavailableBody:
+    'Set up fingerprint, face unlock, or a screen lock in your phone settings first.',
+  biometricEnablePrompt: 'Confirm to enable Finances lock',
+  biometricUnlockPrompt: 'Unlock Finances',
+  biometricLockedSub: 'Your local finances are protected. Authenticate to continue.',
+  biometricUnlockBtn: 'Unlock',
+  biometricFailedHint: 'Authentication cancelled or failed. Tap Unlock to try again.',
 };
 
 export type TranslationSet = typeof EN;
@@ -636,6 +687,49 @@ const LT: TranslationSet = {
       ? `Importuota ${imported} išlaidų (${skipped} dublikatai praleisti).`
       : `Sėkmingai importuota ${imported} išlaidų.`,
   restoreFailTitle: 'Nepavyko atkurti',
+
+  // Custom Categories, Merchant Rules & Biometric Lock (v1.3)
+  customCatsTitle: 'Savos kategorijos',
+  addCustomCatBtn: 'Nauja',
+  customCatsEmpty: 'Susikurkite savas kategorijas, pvz., Augintiniai, Kelionės, Kava ar Sportas.',
+  catDiscretionaryTag: 'Nebūtinos (norai)',
+  catEssentialTag: 'Būtinos (poreikiai)',
+  customCatModalTitle: 'Nauja kategorija',
+  customCatNameLabel: 'Kategorijos pavadinimas',
+  customCatNamePlaceholder: 'pvz., Augintiniai, Kelionės, Kava',
+  customCatNameRequired: 'Įveskite kategorijos pavadinimą.',
+  customCatIconLabel: 'Piktograma',
+  customCatDiscretionaryLabel: 'Priskirti prie nebūtinų išlaidų',
+  customCatDiscretionaryDesc: 'Įtraukiama į taupymo patarimus ir simuliatorių',
+  customCatSaveBtn: 'Sukurti kategoriją',
+  deleteCustomCatTitle: 'Ištrinti kategoriją?',
+  deleteCustomCatBody: (name: string) =>
+    `Pašalinti „${name}“? Esamos šios kategorijos išlaidos bus perkeltos į „Kita“.`,
+  merchantRulesTitle: 'Išmoktos pardavėjų taisyklės',
+  addRuleBtn: 'Pridėti',
+  merchantRulesSub: 'Programėlė automatiškai rūšiuoja čekius pagal šias taisykles. Spustelėkite kategoriją, kad pakeistumėte.',
+  merchantRulesEmpty: 'Taisyklės išmokstamos automatiškai išsaugant čekius, arba galite pridėti ranka.',
+  showAllRules: (n: number) => `Rodyti visas ${n} taisykles`,
+  showLessRules: 'Rodyti mažiau',
+  ruleModalTitle: 'Nauja pardavėjo taisyklė',
+  ruleEditTitle: 'Keisti taisyklės kategoriją',
+  ruleMerchantLabel: 'Pardavėjo raktažodis',
+  ruleMerchantPlaceholder: 'pvz., rimi, steam, wolt',
+  ruleMerchantRequired: 'Įveskite bent 2 simbolius pardavėjo pavadinimui.',
+  ruleSaveBtn: 'Išsaugoti taisyklę',
+  deleteRuleTitle: 'Ištrinti taisyklę?',
+  deleteRuleBody: (key: string) => `Nebetaikyti automatinio rūšiavimo „${key}“?`,
+  securitySectionTitle: 'Privatumas ir užraktas',
+  biometricLockTitle: 'Piršto atspaudo / veido užraktas',
+  biometricLockDesc: 'Reikalauti biometrijos arba telefono PIN atidarant programėlę',
+  biometricUnavailableTitle: 'Biometrija nepasiekiama',
+  biometricUnavailableBody:
+    'Pirmiausia nustatykite piršto atspaudą, veido atrakinimą arba ekrano PIN telefono nustatymuose.',
+  biometricEnablePrompt: 'Patvirtinkite, kad įjungtumėte užraktą',
+  biometricUnlockPrompt: 'Atrakinti „Finances“',
+  biometricLockedSub: 'Jūsų finansai apsaugoti. Patvirtinkite tapatybę, kad tęstumėte.',
+  biometricUnlockBtn: 'Atrakinti',
+  biometricFailedHint: 'Patvirtinimas atšauktas arba nepavyko. Paspauskite „Atrakinti“, kad bandytumėte dar kartą.',
 };
 
 export const TRANSLATIONS: Record<Language, TranslationSet> = {

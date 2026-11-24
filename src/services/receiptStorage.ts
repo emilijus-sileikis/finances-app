@@ -3,7 +3,9 @@ import * as Sharing from 'expo-sharing';
 import { getCurrencyMeta, type CurrencyCode } from '@/constants/currencies';
 import type {
   CategoryBudget,
+  CustomCategory,
   Expense,
+  MerchantRule,
   QuickPreset,
   RecurringExpense,
   SavingsGoal,
@@ -171,6 +173,8 @@ export async function exportExpensesCsv(
 export async function exportFullBackupJson(payload: {
   currency: CurrencyCode;
   monthlyIncome?: number;
+  customCategories?: CustomCategory[];
+  merchantRules?: MerchantRule[];
   expenses: Expense[];
   budgets: CategoryBudget[];
   recurring: RecurringExpense[];

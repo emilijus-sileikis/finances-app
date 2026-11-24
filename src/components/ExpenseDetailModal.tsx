@@ -17,10 +17,8 @@ import {
   toEditableItems,
   type EditableReceiptItem,
 } from '@/components/ReceiptItemsEditor';
-import { CATEGORIES } from '@/constants/categories';
 import { formatEditableAmount } from '@/constants/currencies';
 import { useFinances } from '@/db/FinanceContext';
-import { getCategoryLabel } from '@/i18n/translations';
 import { isPdfUri, openPdfReceipt } from '@/services/receiptStorage';
 import { Colors } from '@/theme/colors';
 import type { CategoryId, Expense, UpdateExpenseInput } from '@/types/finance';
@@ -69,7 +67,7 @@ function ExpenseDetailForm({
   onSave,
   onDelete,
 }: ExpenseDetailFormProps) {
-  const { language, t, currency, currencyMeta } = useFinances();
+  const { t, currency, currencyMeta, allCategories, resolveCategoryLabel } = useFinances();
 
   const [title, setTitle] = useState(expense.title);
   const [merchant, setMerchant] = useState(expense.merchant);
@@ -224,7 +222,7 @@ function ExpenseDetailForm({
 
         <Text style={styles.label}>{t.categoryLearnedLabel}</Text>
         <View style={styles.catGrid}>
-          {CATEGORIES.map((c) => {
+          {allCategories.map((c) => {
             const selected = category === c.id;
             return (
               <Pressable
@@ -246,7 +244,7 @@ function ExpenseDetailForm({
                     selected && { color: Colors.text, fontWeight: '600' },
                   ]}
                 >
-                  {getCategoryLabel(c.id, language)}
+                  {resolveCategoryLabel(c.id)}
                 </Text>
               </Pressable>
             );

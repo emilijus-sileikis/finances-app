@@ -1,4 +1,41 @@
-import type { CategoryId, CategoryMeta } from '@/types/finance';
+import type {
+  BuiltInCategoryId,
+  CategoryMeta,
+  CustomCategory,
+  IoniconName,
+} from '@/types/finance';
+
+export const CUSTOM_CATEGORY_ICONS: IoniconName[] = [
+  'paw-outline',
+  'airplane-outline',
+  'gift-outline',
+  'fitness-outline',
+  'book-outline',
+  'cafe-outline',
+  'heart-outline',
+  'construct-outline',
+  'shirt-outline',
+  'musical-notes-outline',
+  'school-outline',
+  'bicycle-outline',
+  'business-outline',
+  'leaf-outline',
+  'star-outline',
+  'pricetag-outline',
+];
+
+export const CUSTOM_CATEGORY_COLORS: string[] = [
+  '#10B981',
+  '#3B82F6',
+  '#8B5CF6',
+  '#EC4899',
+  '#F59E0B',
+  '#F97316',
+  '#06B6D4',
+  '#14B8A6',
+  '#EF4444',
+  '#84CC16',
+];
 
 export const CATEGORIES: CategoryMeta[] = [
   {
@@ -392,14 +429,33 @@ export const CATEGORIES: CategoryMeta[] = [
   },
 ];
 
-export const CATEGORY_MAP: Record<CategoryId, CategoryMeta> = CATEGORIES.reduce(
+export const CATEGORY_MAP: Record<BuiltInCategoryId, CategoryMeta> = CATEGORIES.reduce(
   (acc, item) => {
-    acc[item.id] = item;
+    acc[item.id as BuiltInCategoryId] = item;
     return acc;
   },
-  {} as Record<CategoryId, CategoryMeta>
+  {} as Record<BuiltInCategoryId, CategoryMeta>
 );
 
-export function getCategoryMeta(id: string): CategoryMeta {
-  return CATEGORY_MAP[id as CategoryId] ?? CATEGORY_MAP.other;
+export function customCategoryToMeta(cat: CustomCategory): CategoryMeta {
+  return {
+    id: cat.id,
+    label: cat.label,
+    icon: cat.icon,
+    color: cat.color,
+    isDiscretionary: cat.isDiscretionary,
+    keywords: [],
+    isCustom: true,
+  };
+}
+
+export function getCategoryMeta(
+  id: string,
+  customCategories: CategoryMeta[] = []
+): CategoryMeta {
+  const builtIn = (CATEGORY_MAP as Record<string, CategoryMeta>)[id];
+  if (builtIn) return builtIn;
+  const custom = customCategories.find((c) => c.id === id);
+  if (custom) return custom;
+  return CATEGORY_MAP.other;
 }

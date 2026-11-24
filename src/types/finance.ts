@@ -3,7 +3,7 @@ import type { Ionicons } from '@expo/vector-icons';
 
 export type IoniconName = ComponentProps<typeof Ionicons>['name'];
 
-export type CategoryId =
+export type BuiltInCategoryId =
   | 'groceries'
   | 'fun'
   | 'games'
@@ -17,6 +17,8 @@ export type CategoryId =
   | 'subscriptions'
   | 'other';
 
+export type CategoryId = BuiltInCategoryId | (string & {});
+
 export interface CategoryMeta {
   id: CategoryId;
   label: string;
@@ -24,6 +26,23 @@ export interface CategoryMeta {
   color: string;
   isDiscretionary: boolean;
   keywords: string[];
+  isCustom?: boolean;
+}
+
+export interface CustomCategory {
+  id: string;
+  label: string;
+  icon: IoniconName;
+  color: string;
+  isDiscretionary: boolean;
+}
+
+export interface NewCustomCategoryInput {
+  id?: string;
+  label: string;
+  icon: IoniconName;
+  color: string;
+  isDiscretionary: boolean;
 }
 
 export interface ExpenseItem {

@@ -2,9 +2,12 @@ import * as SQLite from 'expo-sqlite';
 import type {
   CategoryBudget,
   CategoryId,
+  CustomCategory,
   Expense,
   ExpenseItem,
+  IoniconName,
   MerchantRule,
+  NewCustomCategoryInput,
   NewExpenseInput,
   NewExpenseItemInput,
   NewQuickPresetInput,
@@ -107,6 +110,14 @@ async function initSchema(db: SQLite.SQLiteDatabase): Promise<void> {
       saved_amount REAL NOT NULL DEFAULT 0,
       color TEXT NOT NULL DEFAULT '#10B981',
       deadline TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS custom_categories (
+      id TEXT PRIMARY KEY,
+      label TEXT NOT NULL,
+      icon TEXT NOT NULL DEFAULT 'pricetag-outline',
+      color TEXT NOT NULL DEFAULT '#10B981',
+      is_discretionary INTEGER NOT NULL DEFAULT 0
     );
   `);
 }
@@ -554,7 +565,9 @@ export async function processDueAutoRecurring(): Promise<number> {
 
 export async function fetchMerchantRules(): Promise<MerchantRule[]> {
   const db = await getDb();
-  const rows = await db.getAllAsync<MerchantRuleRow>('SELECT * FROM merchant_rules');
+  const rows = await db.getAllAsync<MerchantRuleRow>(
+    'SELECT * FROM merchant_rules ORDER BY merchant_key ASC'
+  );
   return rows.map((r) => ({
     merchantKey: r.merchant_key,
     category: r.category as CategoryId,
@@ -576,6 +589,84 @@ export async function upsertMerchantRule(
     category,
     new Date().toISOString()
   );
+}
+
+export async function deleteMerchantRule(merchantKey: string): Promise<void> {
+  const db = await getDb();
+  await db.runAsync('DELETE FROM merchant_rules WHERE merchant_key = ?', merchantKey);
+}
+
+// --- Custom Categories ---
+
+interface CustomCategoryRow {
+  id: string;
+  label: string;
+  icon: string;
+  color: string;
+  is_discretionary: number;
+}
+
+export async function fetchAllCustomCategories(): Promise<CustomCategory[]> {
+  const db = await getDb();
+  const rows = await db.getAllAsync<CustomCategoryRow>(
+    'SELECT * FROM custom_categories ORDER BY rowid ASC'
+  );
+  return rows.map((r) => ({
+    id: r.id,
+    label: r.label,
+    icon: r.icon as IoniconName,
+    color: r.color,
+    isDiscretionary: r.is_discretionary === 1,
+  }));
+}
+
+export async function insertCustomCategory(
+  input: NewCustomCategoryInput
+): Promise<string> {
+  const db = await getDb();
+  const id =
+    input.id && input.id.trim().length > 0
+      ? input.id.trim()
+      : `custom_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
+  await db.runAsync(
+    `INSERT INTO custom_categories (id, label, icon, color, is_discretionary)
+     VALUES (?, ?, ?, ?, ?)
+     ON CONFLICT(id) DO UPDATE SET
+       label = excluded.label,
+       icon = excluded.icon,
+       color = excluded.color,
+       is_discretionary = excluded.is_discretionary`,
+    id,
+    input.label.trim(),
+    input.icon,
+    input.color,
+    input.isDiscretionary ? 1 : 0
+  );
+  return id;
+}
+
+export async function deleteCustomCategory(id: string): Promise<void> {
+  const db = await getDb();
+  await db.withTransactionAsync(async () => {
+    await db.runAsync(
+      "UPDATE expenses SET category = 'other' WHERE category = ?",
+      id
+    );
+    await db.runAsync('DELETE FROM budgets WHERE category = ?', id);
+    await db.runAsync(
+      "UPDATE recurring_expenses SET category = 'other' WHERE category = ?",
+      id
+    );
+    await db.runAsync(
+      "UPDATE quick_presets SET category = 'other' WHERE category = ?",
+      id
+    );
+    await db.runAsync(
+      "UPDATE merchant_rules SET category = 'other' WHERE category = ?",
+      id
+    );
+    await db.runAsync('DELETE FROM custom_categories WHERE id = ?', id);
+  });
 }
 
 // --- Quick-Add Presets ---
@@ -686,6 +777,10 @@ export async function restoreBackupToDb(
     await clearAllData();
   }
 
+  for (const cat of payload.customCategories) {
+    await insertCustomCategory(cat);
+  }
+
   const existingExpenses = mode === 'merge' ? await fetchAllExpenses() : [];
   const existingKeys = new Set(
     existingExpenses.map(
@@ -744,6 +839,10 @@ export async function restoreBackupToDb(
     existingGoalKeys.add(k);
   }
 
+  for (const rule of payload.merchantRules) {
+    await upsertMerchantRule(rule.merchantKey, rule.category);
+  }
+
   if (payload.currency) {
     await setAppSetting('currency', payload.currency);
   }
@@ -766,6 +865,7 @@ export async function clearAllData(): Promise<void> {
     DELETE FROM merchant_rules;
     DELETE FROM quick_presets;
     DELETE FROM savings_goals;
+    DELETE FROM custom_categories;
   `);
 }
 

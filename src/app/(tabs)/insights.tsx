@@ -5,13 +5,19 @@ import {
   Pressable,
   ScrollView,
   StyleSheet,
+  Switch,
   Text,
   TextInput,
   View,
 } from 'react-native';
+import * as LocalAuthentication from 'expo-local-authentication';
 import { Ionicons } from '@expo/vector-icons';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { TrendBarChart } from '@/components/TrendBarChart';
+import {
+  CUSTOM_CATEGORY_COLORS,
+  CUSTOM_CATEGORY_ICONS,
+} from '@/constants/categories';
 import { CURRENCIES, formatEditableAmount } from '@/constants/currencies';
 import { useFinances } from '@/db/FinanceContext';
 import { parseBackupJson } from '@/services/backupRestore';
@@ -31,7 +37,13 @@ import {
   getMonthExpenses,
 } from '@/services/savingsEngine';
 import { Colors } from '@/theme/colors';
-import type { SavingsGoal } from '@/types/finance';
+import type {
+  CategoryId,
+  CustomCategory,
+  IoniconName,
+  MerchantRule,
+  SavingsGoal,
+} from '@/types/finance';
 import {
   formatDisplayDate,
   formatMonthLabel,
@@ -52,15 +64,27 @@ export default function InsightsScreen() {
     formatMoney,
     monthlyIncome,
     setMonthlyIncome,
+    biometricLockEnabled,
+    setBiometricLockEnabled,
+    customCategories,
+    customCategoryMetas,
+    allCategories,
+    resolveCategoryMeta,
+    resolveCategoryLabel,
     expenses,
     budgets,
     recurring,
+    merchantRules,
     quickPresets,
     savingsGoals,
     selectedMonth,
     addSavingsGoal,
     contributeToGoal,
     removeSavingsGoal,
+    addCustomCategory,
+    removeCustomCategory,
+    saveMerchantRule,
+    removeMerchantRule,
     importBackup,
     resetAllData,
   } = useFinances();
@@ -84,6 +108,20 @@ export default function InsightsScreen() {
   // Product price tracker search
   const [priceQuery, setPriceQuery] = useState('');
 
+  // Custom Category modal
+  const [showCustomCatModal, setShowCustomCatModal] = useState(false);
+  const [catNameInput, setCatNameInput] = useState('');
+  const [catIconInput, setCatIconInput] = useState<IoniconName>(CUSTOM_CATEGORY_ICONS[0]);
+  const [catColorInput, setCatColorInput] = useState<string>(CUSTOM_CATEGORY_COLORS[0]);
+  const [catDiscretionary, setCatDiscretionary] = useState(true);
+
+  // Merchant Rule modal
+  const [showRuleModal, setShowRuleModal] = useState(false);
+  const [ruleEditingExisting, setRuleEditingExisting] = useState(false);
+  const [ruleMerchantInput, setRuleMerchantInput] = useState('');
+  const [ruleCategoryInput, setRuleCategoryInput] = useState<CategoryId>('groceries');
+  const [showAllRules, setShowAllRules] = useState(false);
+
   const monthExpenses = useMemo(
     () => getMonthExpenses(expenses, selectedMonth),
     [expenses, selectedMonth]
@@ -100,8 +138,16 @@ export default function InsightsScreen() {
 
   const tips = useMemo(
     () =>
-      generateSavingsTips(expenses, budgets, recurring, selectedMonth, language, currency),
-    [expenses, budgets, recurring, selectedMonth, language, currency]
+      generateSavingsTips(
+        expenses,
+        budgets,
+        recurring,
+        selectedMonth,
+        language,
+        currency,
+        customCategoryMetas
+      ),
+    [expenses, budgets, recurring, selectedMonth, language, currency, customCategoryMetas]
   );
 
   const trend = useMemo(
@@ -110,8 +156,8 @@ export default function InsightsScreen() {
   );
 
   const discretionaryTotal = useMemo(
-    () => computeDiscretionaryTotal(monthExpenses),
-    [monthExpenses]
+    () => computeDiscretionaryTotal(monthExpenses, customCategoryMetas),
+    [monthExpenses, customCategoryMetas]
   );
 
   const simulatedMonthly = (discretionaryTotal * trimPercent) / 100;
@@ -216,6 +262,8 @@ export default function InsightsScreen() {
       await exportFullBackupJson({
         currency,
         monthlyIncome,
+        customCategories,
+        merchantRules,
         expenses,
         budgets,
         recurring,
@@ -224,6 +272,98 @@ export default function InsightsScreen() {
       });
     } catch {
       Alert.alert('JSON', 'Could not export JSON backup.');
+    }
+  };
+
+  // --- Custom Categories, Merchant Rules & Biometric Lock Handlers ---
+
+  const handleCreateCustomCategory = async () => {
+    const clean = catNameInput.trim();
+    if (!clean) {
+      Alert.alert(t.customCatModalTitle, t.customCatNameRequired);
+      return;
+    }
+    await addCustomCategory({
+      label: clean,
+      icon: catIconInput,
+      color: catColorInput,
+      isDiscretionary: catDiscretionary,
+    });
+    setCatNameInput('');
+    setCatIconInput(CUSTOM_CATEGORY_ICONS[0]);
+    setCatColorInput(CUSTOM_CATEGORY_COLORS[0]);
+    setCatDiscretionary(true);
+    setShowCustomCatModal(false);
+  };
+
+  const handleDeleteCustomCategory = (cat: CustomCategory) => {
+    Alert.alert(t.deleteCustomCatTitle, t.deleteCustomCatBody(cat.label), [
+      { text: t.cancel, style: 'cancel' },
+      {
+        text: t.delete,
+        style: 'destructive',
+        onPress: () => removeCustomCategory(cat.id),
+      },
+    ]);
+  };
+
+  const openNewRuleModal = () => {
+    setRuleEditingExisting(false);
+    setRuleMerchantInput('');
+    setRuleCategoryInput('groceries');
+    setShowRuleModal(true);
+  };
+
+  const openEditRuleModal = (rule: MerchantRule) => {
+    setRuleEditingExisting(true);
+    setRuleMerchantInput(rule.merchantKey);
+    setRuleCategoryInput(rule.category);
+    setShowRuleModal(true);
+  };
+
+  const handleSaveRule = async () => {
+    const clean = ruleMerchantInput.trim();
+    if (clean.length < 2) {
+      Alert.alert(t.ruleModalTitle, t.ruleMerchantRequired);
+      return;
+    }
+    await saveMerchantRule(clean, ruleCategoryInput);
+    setShowRuleModal(false);
+  };
+
+  const handleDeleteRule = (rule: MerchantRule) => {
+    Alert.alert(t.deleteRuleTitle, t.deleteRuleBody(rule.merchantKey), [
+      { text: t.cancel, style: 'cancel' },
+      {
+        text: t.delete,
+        style: 'destructive',
+        onPress: () => removeMerchantRule(rule.merchantKey),
+      },
+    ]);
+  };
+
+  const handleToggleBiometricLock = async (nextVal: boolean) => {
+    if (!nextVal) {
+      await setBiometricLockEnabled(false);
+      return;
+    }
+    try {
+      const hasHardware = await LocalAuthentication.hasHardwareAsync();
+      const enrolled = await LocalAuthentication.isEnrolledAsync();
+      if (!hasHardware || !enrolled) {
+        Alert.alert(t.biometricUnavailableTitle, t.biometricUnavailableBody);
+        return;
+      }
+      const res = await LocalAuthentication.authenticateAsync({
+        promptMessage: t.biometricEnablePrompt,
+        cancelLabel: t.cancel,
+        disableDeviceFallback: false,
+      });
+      if (res.success) {
+        await setBiometricLockEnabled(true);
+      }
+    } catch {
+      Alert.alert(t.biometricUnavailableTitle, t.biometricUnavailableBody);
     }
   };
 
@@ -689,6 +829,148 @@ export default function InsightsScreen() {
           </View>
         </View>
 
+        {/* Custom Categories */}
+        <View style={styles.sectionHeaderRow}>
+          <Text style={styles.sectionTitle}>{t.customCatsTitle}</Text>
+          <Pressable
+            onPress={() => setShowCustomCatModal(true)}
+            style={styles.smallAddBtn}
+          >
+            <Ionicons name="add" size={14} color={Colors.primary} />
+            <Text style={styles.smallAddText}>{t.addCustomCatBtn}</Text>
+          </Pressable>
+        </View>
+        <View style={styles.card}>
+          {customCategories.length === 0 ? (
+            <Text style={styles.backupNote}>{t.customCatsEmpty}</Text>
+          ) : (
+            customCategories.map((cat, idx) => (
+              <View
+                key={cat.id}
+                style={[
+                  styles.manageRow,
+                  idx < customCategories.length - 1 && styles.historyBorder,
+                ]}
+              >
+                <View style={[styles.catBadge, { backgroundColor: `${cat.color}22` }]}>
+                  <Ionicons name={cat.icon} size={17} color={cat.color} />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.manageTitle}>{cat.label}</Text>
+                  <Text style={styles.manageSub}>
+                    {cat.isDiscretionary ? t.catDiscretionaryTag : t.catEssentialTag}
+                  </Text>
+                </View>
+                <Pressable
+                  onPress={() => handleDeleteCustomCategory(cat)}
+                  style={styles.trashMini}
+                  hitSlop={6}
+                >
+                  <Ionicons name="trash-outline" size={15} color={Colors.danger} />
+                </Pressable>
+              </View>
+            ))
+          )}
+        </View>
+
+        {/* Learned Merchant Rules Editor */}
+        <View style={styles.sectionHeaderRow}>
+          <Text style={styles.sectionTitle}>
+            {t.merchantRulesTitle}
+            {merchantRules.length > 0 ? ` (${merchantRules.length})` : ''}
+          </Text>
+          <Pressable onPress={openNewRuleModal} style={styles.smallAddBtn}>
+            <Ionicons name="add" size={14} color={Colors.primary} />
+            <Text style={styles.smallAddText}>{t.addRuleBtn}</Text>
+          </Pressable>
+        </View>
+        <View style={styles.card}>
+          <Text style={styles.backupNote}>{t.merchantRulesSub}</Text>
+          {merchantRules.length === 0 ? (
+            <Text style={styles.backupNote}>{t.merchantRulesEmpty}</Text>
+          ) : (
+            <>
+              {(showAllRules ? merchantRules : merchantRules.slice(0, 6)).map(
+                (rule, idx, arr) => {
+                  const meta = resolveCategoryMeta(rule.category);
+                  return (
+                    <View
+                      key={rule.merchantKey}
+                      style={[
+                        styles.manageRow,
+                        idx < arr.length - 1 && styles.historyBorder,
+                      ]}
+                    >
+                      <Text style={styles.ruleKeyText} numberOfLines={1}>
+                        {rule.merchantKey}
+                      </Text>
+                      <Pressable
+                        onPress={() => openEditRuleModal(rule)}
+                        style={[
+                          styles.ruleCatPill,
+                          {
+                            borderColor: meta.color,
+                            backgroundColor: `${meta.color}20`,
+                          },
+                        ]}
+                      >
+                        <Ionicons name={meta.icon} size={13} color={meta.color} />
+                        <Text style={styles.ruleCatText} numberOfLines={1}>
+                          {resolveCategoryLabel(rule.category)}
+                        </Text>
+                        <Ionicons
+                          name="create-outline"
+                          size={12}
+                          color={Colors.textSecondary}
+                        />
+                      </Pressable>
+                      <Pressable
+                        onPress={() => handleDeleteRule(rule)}
+                        style={styles.trashMini}
+                        hitSlop={6}
+                      >
+                        <Ionicons name="trash-outline" size={15} color={Colors.danger} />
+                      </Pressable>
+                    </View>
+                  );
+                }
+              )}
+              {merchantRules.length > 6 && (
+                <Pressable
+                  onPress={() => setShowAllRules((v) => !v)}
+                  style={styles.showMoreBtn}
+                >
+                  <Text style={styles.showMoreText}>
+                    {showAllRules
+                      ? t.showLessRules
+                      : t.showAllRules(merchantRules.length)}
+                  </Text>
+                </Pressable>
+              )}
+            </>
+          )}
+        </View>
+
+        {/* Security / Fingerprint & Face Lock */}
+        <Text style={styles.sectionTitle}>{t.securitySectionTitle}</Text>
+        <View style={styles.card}>
+          <View style={styles.securityRow}>
+            <View style={styles.securityIconWrap}>
+              <Ionicons name="finger-print-outline" size={20} color={Colors.primary} />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.manageTitle}>{t.biometricLockTitle}</Text>
+              <Text style={styles.manageSub}>{t.biometricLockDesc}</Text>
+            </View>
+            <Switch
+              value={biometricLockEnabled}
+              onValueChange={handleToggleBiometricLock}
+              trackColor={{ false: Colors.border, true: Colors.primaryDark }}
+              thumbColor={biometricLockEnabled ? Colors.primary : Colors.textMuted}
+            />
+          </View>
+        </View>
+
         {/* Currency Setting */}
         <Text style={styles.sectionTitle}>{t.currencySectionTitle}</Text>
         <View style={styles.card}>
@@ -954,6 +1236,166 @@ export default function InsightsScreen() {
                 <Text style={styles.confirmText}>{t.goalContribBtn}</Text>
               </Pressable>
             </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Create Custom Category Modal */}
+      <Modal
+        visible={showCustomCatModal}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setShowCustomCatModal(false)}
+      >
+        <View style={styles.sheetBackdrop}>
+          <View style={styles.sheet}>
+            <View style={styles.sheetHeader}>
+              <Text style={styles.modalTitle}>{t.customCatModalTitle}</Text>
+              <Pressable onPress={() => setShowCustomCatModal(false)}>
+                <Ionicons name="close" size={22} color={Colors.text} />
+              </Pressable>
+            </View>
+            <ScrollView contentContainerStyle={styles.sheetBody}>
+              <Text style={styles.fieldLabel}>{t.customCatNameLabel} *</Text>
+              <TextInput
+                value={catNameInput}
+                onChangeText={setCatNameInput}
+                placeholder={t.customCatNamePlaceholder}
+                placeholderTextColor={Colors.textMuted}
+                style={styles.fieldInput}
+              />
+
+              <Text style={styles.fieldLabel}>{t.customCatIconLabel}</Text>
+              <View style={styles.iconGrid}>
+                {CUSTOM_CATEGORY_ICONS.map((iconName) => {
+                  const selected = catIconInput === iconName;
+                  return (
+                    <Pressable
+                      key={iconName}
+                      onPress={() => setCatIconInput(iconName)}
+                      style={[
+                        styles.iconChoice,
+                        selected && {
+                          borderColor: catColorInput,
+                          backgroundColor: `${catColorInput}25`,
+                        },
+                      ]}
+                    >
+                      <Ionicons
+                        name={iconName}
+                        size={20}
+                        color={selected ? catColorInput : Colors.textSecondary}
+                      />
+                    </Pressable>
+                  );
+                })}
+              </View>
+
+              <Text style={styles.fieldLabel}>{t.goalColorLabel}</Text>
+              <View style={[styles.colorRow, { flexWrap: 'wrap' }]}>
+                {CUSTOM_CATEGORY_COLORS.map((col) => (
+                  <Pressable
+                    key={col}
+                    onPress={() => setCatColorInput(col)}
+                    style={[
+                      styles.colorDot,
+                      { backgroundColor: col },
+                      catColorInput === col && styles.colorDotActive,
+                    ]}
+                  />
+                ))}
+              </View>
+
+              <View style={styles.toggleRow}>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.manageTitle}>{t.customCatDiscretionaryLabel}</Text>
+                  <Text style={styles.manageSub}>{t.customCatDiscretionaryDesc}</Text>
+                </View>
+                <Switch
+                  value={catDiscretionary}
+                  onValueChange={setCatDiscretionary}
+                  trackColor={{ false: Colors.border, true: Colors.primaryDark }}
+                  thumbColor={catDiscretionary ? Colors.primary : Colors.textMuted}
+                />
+              </View>
+
+              <Pressable onPress={handleCreateCustomCategory} style={styles.createBtn}>
+                <Text style={styles.createBtnText}>{t.customCatSaveBtn}</Text>
+              </Pressable>
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Add / Edit Merchant Rule Modal */}
+      <Modal
+        visible={showRuleModal}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setShowRuleModal(false)}
+      >
+        <View style={styles.sheetBackdrop}>
+          <View style={styles.sheet}>
+            <View style={styles.sheetHeader}>
+              <Text style={styles.modalTitle}>
+                {ruleEditingExisting ? t.ruleEditTitle : t.ruleModalTitle}
+              </Text>
+              <Pressable onPress={() => setShowRuleModal(false)}>
+                <Ionicons name="close" size={22} color={Colors.text} />
+              </Pressable>
+            </View>
+            <ScrollView contentContainerStyle={styles.sheetBody}>
+              <Text style={styles.fieldLabel}>{t.ruleMerchantLabel} *</Text>
+              <TextInput
+                value={ruleMerchantInput}
+                onChangeText={setRuleMerchantInput}
+                editable={!ruleEditingExisting}
+                placeholder={t.ruleMerchantPlaceholder}
+                placeholderTextColor={Colors.textMuted}
+                style={[
+                  styles.fieldInput,
+                  ruleEditingExisting && { opacity: 0.65 },
+                ]}
+              />
+
+              <Text style={styles.fieldLabel}>{t.categoryLabel}</Text>
+              <View style={styles.catGrid}>
+                {allCategories.map((c) => {
+                  const selected = ruleCategoryInput === c.id;
+                  return (
+                    <Pressable
+                      key={c.id}
+                      onPress={() => setRuleCategoryInput(c.id)}
+                      style={[
+                        styles.catChip,
+                        selected && {
+                          borderColor: c.color,
+                          backgroundColor: `${c.color}25`,
+                        },
+                      ]}
+                    >
+                      <Ionicons
+                        name={c.icon}
+                        size={14}
+                        color={selected ? c.color : Colors.textSecondary}
+                      />
+                      <Text
+                        style={[
+                          styles.catChipText,
+                          selected && { color: Colors.text, fontWeight: '700' },
+                        ]}
+                      >
+                        {resolveCategoryLabel(c.id)}
+                      </Text>
+                    </Pressable>
+                  );
+                })}
+              </View>
+
+              <Pressable onPress={handleSaveRule} style={styles.createBtn}>
+                <Text style={styles.createBtnText}>{t.ruleSaveBtn}</Text>
+              </Pressable>
+            </ScrollView>
           </View>
         </View>
       </Modal>
@@ -1591,5 +2033,125 @@ const styles = StyleSheet.create({
     color: Colors.white,
     fontSize: 15,
     fontWeight: '800',
+  },
+  manageRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    paddingVertical: 8,
+  },
+  catBadge: {
+    width: 34,
+    height: 34,
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  manageTitle: {
+    color: Colors.text,
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  manageSub: {
+    color: Colors.textMuted,
+    fontSize: 11,
+    marginTop: 2,
+  },
+  ruleKeyText: {
+    flex: 1,
+    color: Colors.text,
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  ruleCatPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    paddingHorizontal: 9,
+    paddingVertical: 5,
+    borderRadius: 9,
+    borderWidth: 1,
+    maxWidth: '52%',
+  },
+  ruleCatText: {
+    color: Colors.text,
+    fontSize: 11,
+    fontWeight: '700',
+    flexShrink: 1,
+  },
+  showMoreBtn: {
+    alignItems: 'center',
+    paddingVertical: 8,
+    borderRadius: 10,
+    backgroundColor: Colors.bg,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    marginTop: 4,
+  },
+  showMoreText: {
+    color: Colors.primary,
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  securityRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  securityIconWrap: {
+    width: 40,
+    height: 40,
+    borderRadius: 12,
+    backgroundColor: Colors.primarySoft,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  iconGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    paddingVertical: 4,
+  },
+  iconChoice: {
+    width: 44,
+    height: 44,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    backgroundColor: Colors.bg,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  toggleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    backgroundColor: Colors.bg,
+    borderRadius: 12,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    marginTop: 6,
+  },
+  catGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    paddingVertical: 4,
+  },
+  catChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    backgroundColor: Colors.bg,
+  },
+  catChipText: {
+    color: Colors.textSecondary,
+    fontSize: 12,
   },
 });
