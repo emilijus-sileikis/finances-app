@@ -45,6 +45,11 @@ import {
   type CurrencyMeta,
 } from '@/constants/currencies';
 import {
+  getEffectiveFxRates,
+  parseCustomFxRates,
+  type CustomFxRates,
+} from '@/services/fxRates';
+import {
   getCategoryLabel,
   TRANSLATIONS,
   type Language,
@@ -83,6 +88,9 @@ interface FinanceContextValue {
   currencyMeta: CurrencyMeta;
   setCurrency: (code: CurrencyCode) => Promise<void>;
   formatMoney: (amount: number, showDecimals?: boolean) => string;
+  fxRates: Record<CurrencyCode, number>;
+  updateFxRate: (code: CurrencyCode, eurRate: number) => Promise<void>;
+  resetFxRates: () => Promise<void>;
   monthlyIncome: number;
   setMonthlyIncome: (amount: number) => Promise<void>;
   biometricLockEnabled: boolean;
@@ -138,6 +146,7 @@ export function FinanceProvider({ children }: { children: React.ReactNode }) {
   const [ready, setReady] = useState(false);
   const [language, setLanguageState] = useState<Language>('en');
   const [currency, setCurrencyState] = useState<CurrencyCode>('EUR');
+  const [customFxRates, setCustomFxRates] = useState<CustomFxRates>({});
   const [monthlyIncome, setMonthlyIncomeState] = useState<number>(0);
   const [biometricLockEnabled, setBiometricLockEnabledState] = useState<boolean>(false);
   const [appLocked, setAppLocked] = useState<boolean>(false);
@@ -175,17 +184,21 @@ export function FinanceProvider({ children }: { children: React.ReactNode }) {
     let active = true;
     (async () => {
       try {
-        const [savedLang, savedCurrency, savedIncome, savedLock] = await Promise.all([
+        const [savedLang, savedCurrency, savedIncome, savedLock, savedFx] = await Promise.all([
           getAppSetting('language'),
           getAppSetting('currency'),
           getAppSetting('monthly_income'),
           getAppSetting('biometric_lock_enabled'),
+          getAppSetting('custom_fx_rates'),
         ]);
         if (active && (savedLang === 'en' || savedLang === 'lt')) {
           setLanguageState(savedLang);
         }
         if (active && isCurrencyCode(savedCurrency)) {
           setCurrencyState(savedCurrency);
+        }
+        if (active && savedFx) {
+          setCustomFxRates(parseCustomFxRates(savedFx));
         }
         if (active && savedIncome) {
           const parsedInc = Number(savedIncome);
@@ -221,6 +234,22 @@ export function FinanceProvider({ children }: { children: React.ReactNode }) {
   const setCurrency = useCallback(async (code: CurrencyCode) => {
     setCurrencyState(code);
     await setAppSetting('currency', code);
+  }, []);
+
+  const fxRates = useMemo(() => getEffectiveFxRates(customFxRates), [customFxRates]);
+
+  const updateFxRate = useCallback(async (code: CurrencyCode, eurRate: number) => {
+    if (code === 'EUR' || !Number.isFinite(eurRate) || eurRate <= 0) return;
+    setCustomFxRates((prev) => {
+      const next: CustomFxRates = { ...prev, [code]: eurRate };
+      void setAppSetting('custom_fx_rates', JSON.stringify(next));
+      return next;
+    });
+  }, []);
+
+  const resetFxRates = useCallback(async () => {
+    setCustomFxRates({});
+    await setAppSetting('custom_fx_rates', '{}');
   }, []);
 
   const setMonthlyIncome = useCallback(async (amount: number) => {
@@ -489,6 +518,9 @@ export function FinanceProvider({ children }: { children: React.ReactNode }) {
       currencyMeta,
       setCurrency,
       formatMoney,
+      fxRates,
+      updateFxRate,
+      resetFxRates,
       monthlyIncome,
       setMonthlyIncome,
       biometricLockEnabled,
@@ -543,6 +575,9 @@ export function FinanceProvider({ children }: { children: React.ReactNode }) {
       currencyMeta,
       setCurrency,
       formatMoney,
+      fxRates,
+      updateFxRate,
+      resetFxRates,
       monthlyIncome,
       setMonthlyIncome,
       biometricLockEnabled,

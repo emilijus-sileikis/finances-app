@@ -1,7 +1,12 @@
 import React from 'react';
 import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { formatEditableAmount, type CurrencyCode } from '@/constants/currencies';
+import {
+  formatCurrency,
+  formatEditableAmount,
+  getCurrencyMeta,
+  type CurrencyCode,
+} from '@/constants/currencies';
 import { useFinances } from '@/db/FinanceContext';
 import { Colors } from '@/theme/colors';
 import type { NewExpenseItemInput } from '@/types/finance';
@@ -44,6 +49,7 @@ interface ReceiptItemsEditorProps {
   onChange: (next: EditableReceiptItem[]) => void;
   receiptTotal: number | null;
   onApplyItemsSum?: (sum: number) => void;
+  currencyOverride?: CurrencyCode;
 }
 
 export function ReceiptItemsEditor({
@@ -51,8 +57,13 @@ export function ReceiptItemsEditor({
   onChange,
   receiptTotal,
   onApplyItemsSum,
+  currencyOverride,
 }: ReceiptItemsEditorProps) {
-  const { t, currencyMeta, formatMoney } = useFinances();
+  const { t, currency } = useFinances();
+  const activeCode = currencyOverride ?? currency;
+  const currencyMeta = getCurrencyMeta(activeCode);
+  const formatMoney = (amount: number, showDecimals?: boolean) =>
+    formatCurrency(amount, activeCode, showDecimals);
 
   const itemsSum = items.reduce((sum, item) => {
     const p = parseFlexibleAmount(item.priceText, true);

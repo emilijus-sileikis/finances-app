@@ -17,16 +17,32 @@ import * as ImagePicker from 'expo-image-picker';
 import { useShareIntentContext } from 'expo-share-intent';
 import { Ionicons } from '@expo/vector-icons';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { ReceiptOcrWorker, type OcrJobPayload } from '@/components/ReceiptOcrWorker';
+import {
+  ReceiptOcrWorker,
+  type OcrJobPayload,
+  type OcrRotation,
+} from '@/components/ReceiptOcrWorker';
 import {
   fromEditableItems,
   ReceiptItemsEditor,
   toEditableItems,
   type EditableReceiptItem,
 } from '@/components/ReceiptItemsEditor';
-import { formatEditableAmount } from '@/constants/currencies';
+import {
+  CURRENCIES,
+  formatCurrency,
+  formatEditableAmount,
+  getCurrencyMeta,
+  type CurrencyCode,
+} from '@/constants/currencies';
 import { useFinances } from '@/db/FinanceContext';
 import { findPotentialDuplicate } from '@/services/duplicateGuard';
+import {
+  computeUpdatedEurRate,
+  convertCurrency,
+  detectReceiptCurrency,
+  getFriendlyRatePair,
+} from '@/services/fxRates';
 import { parseReceiptText, suggestCategory } from '@/services/receiptParser';
 import { splitReceiptAmounts } from '@/services/receiptSplit';
 import {
@@ -56,6 +72,8 @@ export default function ScanScreen() {
     currency,
     currencyMeta,
     formatMoney,
+    fxRates,
+    updateFxRate,
     allCategories,
     resolveCategoryMeta,
     resolveCategoryLabel,
@@ -70,7 +88,14 @@ export default function ScanScreen() {
   } = useFinances();
 
   const { hasShareIntent, shareIntent, resetShareIntent } = useShareIntentContext();
-  const ocrLang = currency === 'KRW' ? 'kor+eng' : currency === 'JPY' ? 'jpn+eng' : 'lit+eng';
+
+  // Scan quality & foreign trip currency state
+  const [cropBeforeScan, setCropBeforeScan] = useState(true);
+  const [highContrastOcr, setHighContrastOcr] = useState(true);
+  const [imageRotation, setImageRotation] = useState<OcrRotation>(0);
+  const [receiptCurrency, setReceiptCurrency] = useState<CurrencyCode | null>(null);
+  const [showFxEditModal, setShowFxEditModal] = useState(false);
+  const [fxRateInput, setFxRateInput] = useState('');
 
   // Receipt file & OCR/PDF worker state
   const [receiptUri, setReceiptUri] = useState<string | null>(null);
@@ -110,17 +135,35 @@ export default function ScanScreen() {
   const [presetCategory, setPresetCategory] = useState<CategoryId>('dining');
   const [quickToast, setQuickToast] = useState<string | null>(null);
 
+  const activeCurrency: CurrencyCode = receiptCurrency ?? currency;
+  const activeCurrencyMeta = getCurrencyMeta(activeCurrency);
+  const isForeignCurrency = activeCurrency !== currency;
+  const ocrLang =
+    activeCurrency === 'KRW'
+      ? 'kor+eng'
+      : activeCurrency === 'JPY'
+        ? 'jpn+eng'
+        : 'lit+eng';
+
   const applyParsedText = useCallback(
     (text: string) => {
       setRawText(text);
       setSplitSnapshot(null);
-      const parsed = parseReceiptText(text, merchantRules, currency);
+
+      const detected = receiptCurrency === null ? detectReceiptCurrency(text) : null;
+      const parseCurr: CurrencyCode =
+        receiptCurrency ?? (detected && detected !== currency ? detected : currency);
+      if (detected && detected !== currency) {
+        setReceiptCurrency(detected);
+      }
+
+      const parsed = parseReceiptText(text, merchantRules, parseCurr);
 
       if (parsed.amount !== null) {
-        setAmountText(formatEditableAmount(parsed.amount, currency));
+        setAmountText(formatEditableAmount(parsed.amount, parseCurr));
       }
       if (parsed.taxAmount !== null) {
-        setTaxText(formatEditableAmount(parsed.taxAmount, currency));
+        setTaxText(formatEditableAmount(parsed.taxAmount, parseCurr));
       }
       if (parsed.merchant) {
         setMerchant(parsed.merchant);
@@ -129,22 +172,32 @@ export default function ScanScreen() {
       if (parsed.date) {
         setDate(parsed.date);
       }
-      setDraftItems(toEditableItems(parsed.items, currency));
+      setDraftItems(toEditableItems(parsed.items, parseCurr));
       setCategory(parsed.category);
       setCategoryManuallyPicked(false);
       setCategoryHint(
         t.autoSorted(resolveCategoryLabel(parsed.category), parsed.matchedHint)
       );
     },
-    [merchantRules, resolveCategoryLabel, t, currency]
+    [merchantRules, resolveCategoryLabel, t, currency, receiptCurrency]
   );
 
   const startOcrForSavedImage = useCallback(
-    async (savedUri: string, customNotice?: string) => {
+    async (
+      savedUri: string,
+      opts?: {
+        customNotice?: string;
+        rotationDeg?: OcrRotation;
+        highContrast?: boolean;
+      }
+    ) => {
+      const rot = opts?.rotationDeg ?? 0;
+      const useContrast = opts?.highContrast ?? highContrastOcr;
       setReceiptUri(savedUri);
       setPdfFileName(null);
+      setImageRotation(rot);
       setSplitSnapshot(null);
-      setOcrNotice(customNotice ?? null);
+      setOcrNotice(opts?.customNotice ?? null);
       setOcrScanning(true);
       setOcrStatus(t.preparingImage);
       setOcrProgress(0.08);
@@ -155,19 +208,22 @@ export default function ScanScreen() {
           kind: 'image',
           data: dataUrl,
           ocrLang,
+          rotationDeg: rot,
+          highContrast: useContrast,
         }));
       } catch {
         setOcrScanning(false);
         setOcrNotice(t.ocrEmptyNotice);
       }
     },
-    [t, ocrLang]
+    [t, ocrLang, highContrastOcr]
   );
 
   const startPdfJob = useCallback(
     (savedUri: string, base64: string, fileName: string, customNotice?: string) => {
       setReceiptUri(savedUri);
       setPdfFileName(fileName);
+      setImageRotation(0);
       setSplitSnapshot(null);
       setOcrNotice(customNotice ?? null);
       setOcrScanning(true);
@@ -178,9 +234,10 @@ export default function ScanScreen() {
         kind: 'pdf',
         data: base64,
         ocrLang,
+        highContrast: highContrastOcr,
       }));
     },
-    [t, ocrLang]
+    [t, ocrLang, highContrastOcr]
   );
 
   // Receive files or text shared directly from Gmail, Gallery, Files, WhatsApp, etc.
@@ -206,7 +263,9 @@ export default function ScanScreen() {
             const ext = mime.includes('png') ? 'png' : mime.includes('webp') ? 'webp' : 'jpg';
             const savedUri = await saveReceiptFromUri(sharedFile.path, ext);
             if (!cancelled) {
-              await startOcrForSavedImage(savedUri, t.sharedFileNotice);
+              await startOcrForSavedImage(savedUri, {
+                customNotice: t.sharedFileNotice,
+              });
             }
           }
         } else if (shareIntent.text?.trim()) {
@@ -247,7 +306,8 @@ export default function ScanScreen() {
 
     const res = await ImagePicker.launchCameraAsync({
       mediaTypes: ['images'],
-      quality: 0.65,
+      allowsEditing: cropBeforeScan,
+      quality: 0.85,
     });
 
     if (res.canceled || !res.assets[0]) return;
@@ -264,12 +324,31 @@ export default function ScanScreen() {
 
     const res = await ImagePicker.launchImageLibraryAsync({
       mediaTypes: ['images'],
-      quality: 0.7,
+      allowsEditing: cropBeforeScan,
+      quality: 0.85,
     });
 
     if (res.canceled || !res.assets[0]) return;
     const saved = await saveReceiptFromUri(res.assets[0].uri);
     await startOcrForSavedImage(saved);
+  };
+
+  const handleRotateAndRescan = async () => {
+    if (!receiptUri || isPdfUri(receiptUri)) return;
+    const nextRot = ((imageRotation + 90) % 360) as OcrRotation;
+    await startOcrForSavedImage(receiptUri, {
+      rotationDeg: nextRot,
+      highContrast: highContrastOcr,
+    });
+  };
+
+  const handleRescanCurrent = async (overrideContrast?: boolean) => {
+    if (!receiptUri || isPdfUri(receiptUri)) return;
+    const contrastToUse = overrideContrast ?? highContrastOcr;
+    await startOcrForSavedImage(receiptUri, {
+      rotationDeg: imageRotation,
+      highContrast: contrastToUse,
+    });
   };
 
   const handlePickPdf = async () => {
@@ -361,7 +440,7 @@ export default function ScanScreen() {
       taxAmount: tax,
       itemPrices,
       divisor,
-      currency,
+      currency: activeCurrency,
     });
 
     setSplitSnapshot({
@@ -370,15 +449,15 @@ export default function ScanScreen() {
       draftItems: baseItems,
       divisor,
     });
-    setAmountText(formatEditableAmount(result.amount, currency));
+    setAmountText(formatEditableAmount(result.amount, activeCurrency));
     if (tax > 0) {
-      setTaxText(formatEditableAmount(result.taxAmount, currency));
+      setTaxText(formatEditableAmount(result.taxAmount, activeCurrency));
     }
     if (baseItems.length > 0) {
       setDraftItems(
         baseItems.map((it, idx) => ({
           ...it,
-          priceText: formatEditableAmount(result.itemPrices[idx] ?? 0, currency),
+          priceText: formatEditableAmount(result.itemPrices[idx] ?? 0, activeCurrency),
         }))
       );
     }
@@ -422,6 +501,8 @@ export default function ScanScreen() {
     }
     setReceiptUri(null);
     setPdfFileName(null);
+    setImageRotation(0);
+    setReceiptCurrency(null);
     setOcrJob(null);
     setOcrScanning(false);
     setOcrStatus('');
@@ -442,36 +523,71 @@ export default function ScanScreen() {
     setNotes('');
   };
 
+  const openQuickFxEdit = () => {
+    if (!isForeignCurrency) return;
+    const pair = getFriendlyRatePair(currency, activeCurrency, fxRates);
+    setFxRateInput(String(pair.value));
+    setShowFxEditModal(true);
+  };
+
+  const handleSaveQuickFxRate = async () => {
+    if (!isForeignCurrency) return;
+    const parsed = parseFlexibleAmount(fxRateInput);
+    if (parsed === null || parsed <= 0) {
+      Alert.alert(t.alertAmountTitle, t.alertAmountBody);
+      return;
+    }
+    const pair = getFriendlyRatePair(currency, activeCurrency, fxRates);
+    const updated = computeUpdatedEurRate(pair.unitCode, pair.quoteCode, parsed, fxRates);
+    if (updated) {
+      await updateFxRate(updated.code, updated.eurRate);
+    }
+    setShowFxEditModal(false);
+  };
+
   const commitExpense = async (
     cleanTitle: string,
     cleanMerchant: string,
-    parsedAmount: number,
-    parsedTax: number,
-    cleanDate: string
+    finalAmount: number,
+    finalTax: number,
+    cleanDate: string,
+    originalForeignAmount: number | null
   ) => {
     setSaving(true);
     try {
       const splitNote = splitSnapshot ? `Split ÷${splitSnapshot.divisor}` : '';
-      const combinedNotes = [notes.trim(), splitNote].filter(Boolean).join(' • ');
+      const fxNote =
+        originalForeignAmount !== null && isForeignCurrency
+          ? t.fxOriginalNote(formatCurrency(originalForeignAmount, activeCurrency))
+          : '';
+      const combinedNotes = [notes.trim(), fxNote, splitNote].filter(Boolean).join(' • ');
+
+      const rawItems = fromEditableItems(draftItems);
+      const convertedItems = isForeignCurrency
+        ? rawItems.map((it) => ({
+            ...it,
+            price: convertCurrency(it.price, activeCurrency, currency, fxRates),
+          }))
+        : rawItems;
 
       await addExpense({
         title: cleanTitle,
         merchant: cleanMerchant,
-        amount: parsedAmount,
-        taxAmount: parsedTax,
+        amount: finalAmount,
+        taxAmount: finalTax,
         category,
         date: cleanDate,
         notes: combinedNotes,
         receiptUri,
         rawOcrText: rawText.trim() || null,
-        items: fromEditableItems(draftItems),
+        items: convertedItems,
       });
       setSelectedMonth(cleanDate.slice(0, 7));
       Alert.alert(
         t.alertSavedTitle,
         t.alertSavedBody(
           cleanTitle,
-          formatMoney(parsedAmount),
+          formatMoney(finalAmount),
           resolveCategoryLabel(category)
         )
       );
@@ -489,16 +605,23 @@ export default function ScanScreen() {
     }
 
     const parsedTax = taxText.trim() ? parseFlexibleAmount(taxText) ?? 0 : 0;
+    const finalAmount = isForeignCurrency
+      ? convertCurrency(parsedAmount, activeCurrency, currency, fxRates)
+      : parsedAmount;
+    const finalTax = isForeignCurrency
+      ? convertCurrency(parsedTax, activeCurrency, currency, fxRates)
+      : parsedTax;
+
     const cleanDate = isValidIsoDate(date) ? date.trim() : getTodayIso();
     const cleanMerchant = merchant.trim();
     const cleanTitle =
       title.trim() || cleanMerchant || resolveCategoryLabel(category);
 
-    // Duplicate receipt guard
+    // Duplicate receipt guard (compares in main currency)
     const duplicate = findPotentialDuplicate(
       expenses,
       {
-        amount: parsedAmount,
+        amount: finalAmount,
         date: cleanDate,
         merchant: cleanMerchant,
         title: cleanTitle,
@@ -518,9 +641,10 @@ export default function ScanScreen() {
               void commitExpense(
                 cleanTitle,
                 cleanMerchant,
-                parsedAmount,
-                parsedTax,
-                cleanDate
+                finalAmount,
+                finalTax,
+                cleanDate,
+                isForeignCurrency ? parsedAmount : null
               );
             },
           },
@@ -529,7 +653,14 @@ export default function ScanScreen() {
       return;
     }
 
-    await commitExpense(cleanTitle, cleanMerchant, parsedAmount, parsedTax, cleanDate);
+    await commitExpense(
+      cleanTitle,
+      cleanMerchant,
+      finalAmount,
+      finalTax,
+      cleanDate,
+      isForeignCurrency ? parsedAmount : null
+    );
   };
 
   const handleOcrProgress = useCallback((status: string, progress: number) => {
@@ -625,6 +756,47 @@ export default function ScanScreen() {
             </Pressable>
           </View>
 
+          {/* OCR Options Strip: Crop before scan + High-Contrast Paper OCR */}
+          <View style={styles.ocrOptionsRow}>
+            <Pressable
+              onPress={() => setCropBeforeScan((v) => !v)}
+              style={[styles.ocrOptPill, cropBeforeScan && styles.ocrOptPillActive]}
+            >
+              <Ionicons
+                name="crop-outline"
+                size={14}
+                color={cropBeforeScan ? Colors.primary : Colors.textMuted}
+              />
+              <Text
+                style={[
+                  styles.ocrOptText,
+                  cropBeforeScan && { color: Colors.primary },
+                ]}
+              >
+                {t.cropPhotoToggle}
+              </Text>
+            </Pressable>
+
+            <Pressable
+              onPress={() => setHighContrastOcr((v) => !v)}
+              style={[styles.ocrOptPill, highContrastOcr && styles.ocrOptPillActive]}
+            >
+              <Ionicons
+                name="contrast-outline"
+                size={14}
+                color={highContrastOcr ? Colors.primary : Colors.textMuted}
+              />
+              <Text
+                style={[
+                  styles.ocrOptText,
+                  highContrastOcr && { color: Colors.primary },
+                ]}
+              >
+                {t.highContrastToggle}
+              </Text>
+            </Pressable>
+          </View>
+
           {/* 1-Tap Quick-Add Presets */}
           <View style={styles.quickCard}>
             <View style={styles.quickHeader}>
@@ -713,11 +885,18 @@ export default function ScanScreen() {
               </View>
             ) : (
               <View style={styles.previewCard}>
-                <Image
-                  source={{ uri: receiptUri }}
-                  style={styles.previewImg}
-                  resizeMode="cover"
-                />
+                <View style={styles.previewImgWrap}>
+                  <Image
+                    source={{ uri: receiptUri }}
+                    style={[
+                      styles.previewImg,
+                      imageRotation !== 0 && {
+                        transform: [{ rotate: `${imageRotation}deg` }],
+                      },
+                    ]}
+                    resizeMode="contain"
+                  />
+                </View>
                 <View style={styles.previewOverlayRow}>
                   <View style={styles.attachedPill}>
                     <Ionicons name="checkmark-circle" size={14} color={Colors.primary} />
@@ -727,10 +906,50 @@ export default function ScanScreen() {
                     onPress={() => {
                       deleteReceiptFile(receiptUri);
                       setReceiptUri(null);
+                      setImageRotation(0);
                     }}
                     style={styles.removeImgBtn}
                   >
                     <Ionicons name="trash-outline" size={15} color={Colors.danger} />
+                  </Pressable>
+                </View>
+                <View style={styles.previewToolsRow}>
+                  <Pressable
+                    onPress={() => void handleRotateAndRescan()}
+                    disabled={ocrScanning}
+                    style={styles.previewToolBtn}
+                  >
+                    <Ionicons name="refresh-outline" size={14} color={Colors.accent} />
+                    <Text style={styles.previewToolText}>
+                      {t.rotateRescanBtn}
+                      {imageRotation > 0 ? ` (${imageRotation}°)` : ''}
+                    </Text>
+                  </Pressable>
+                  <Pressable
+                    onPress={() => {
+                      const next = !highContrastOcr;
+                      setHighContrastOcr(next);
+                      void handleRescanCurrent(next);
+                    }}
+                    disabled={ocrScanning}
+                    style={[
+                      styles.previewToolBtn,
+                      highContrastOcr && styles.previewToolBtnActive,
+                    ]}
+                  >
+                    <Ionicons
+                      name="contrast-outline"
+                      size={14}
+                      color={highContrastOcr ? Colors.primary : Colors.textSecondary}
+                    />
+                    <Text
+                      style={[
+                        styles.previewToolText,
+                        highContrastOcr && { color: Colors.primary },
+                      ]}
+                    >
+                      {highContrastOcr ? t.contrastOnTag : t.contrastOffTag}
+                    </Text>
                   </Pressable>
                 </View>
               </View>
@@ -801,11 +1020,53 @@ export default function ScanScreen() {
 
           {/* Expense Form */}
           <View style={styles.formCard}>
+            {/* Trip / Foreign Currency Picker */}
+            <View style={styles.fxPickerRow}>
+              <Text style={styles.fxPickerLabel}>{t.receiptCurrencyLabel}</Text>
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                contentContainerStyle={styles.fxChipsRow}
+              >
+                {CURRENCIES.map((cur) => {
+                  const selected = activeCurrency === cur.code;
+                  return (
+                    <Pressable
+                      key={cur.code}
+                      onPress={() => {
+                        setReceiptCurrency(cur.code === currency ? null : cur.code);
+                        if (splitSnapshot) setSplitSnapshot(null);
+                      }}
+                      style={[
+                        styles.fxChip,
+                        selected && styles.fxChipActive,
+                        selected && cur.code !== currency && styles.fxChipForeign,
+                      ]}
+                    >
+                      <Text
+                        style={[
+                          styles.fxChipText,
+                          selected && {
+                            color: cur.code !== currency ? Colors.accent : Colors.primary,
+                            fontWeight: '800',
+                          },
+                        ]}
+                      >
+                        {cur.symbol} {cur.code}
+                      </Text>
+                    </Pressable>
+                  );
+                })}
+              </ScrollView>
+            </View>
+
             <View style={styles.amountRow}>
               <View style={{ flex: 1.3 }}>
-                <Text style={styles.label}>{t.totalAmountLabel(currencyMeta.symbol)}</Text>
+                <Text style={styles.label}>
+                  {t.totalAmountLabel(activeCurrencyMeta.symbol)}
+                </Text>
                 <View style={styles.euroInputWrap}>
-                  <Text style={styles.euroSign}>{currencyMeta.symbol}</Text>
+                  <Text style={styles.euroSign}>{activeCurrencyMeta.symbol}</Text>
                   <TextInput
                     value={amountText}
                     onChangeText={(val) => {
@@ -813,29 +1074,57 @@ export default function ScanScreen() {
                       if (splitSnapshot) setSplitSnapshot(null);
                     }}
                     keyboardType="decimal-pad"
-                    placeholder={currencyMeta.decimals === 0 ? '0' : '0.00'}
+                    placeholder={activeCurrencyMeta.decimals === 0 ? '0' : '0.00'}
                     placeholderTextColor={Colors.textMuted}
                     style={styles.amountInput}
                   />
                 </View>
               </View>
               <View style={{ flex: 1 }}>
-                <Text style={styles.label}>{t.taxVatLabel(currencyMeta.symbol)}</Text>
+                <Text style={styles.label}>
+                  {t.taxVatLabel(activeCurrencyMeta.symbol)}
+                </Text>
                 <View style={styles.euroInputWrap}>
                   <Text style={[styles.euroSign, { fontSize: 16 }]}>
-                    {currencyMeta.symbol}
+                    {activeCurrencyMeta.symbol}
                   </Text>
                   <TextInput
                     value={taxText}
                     onChangeText={setTaxText}
                     keyboardType="decimal-pad"
-                    placeholder={currencyMeta.decimals === 0 ? '0' : '0.00'}
+                    placeholder={activeCurrencyMeta.decimals === 0 ? '0' : '0.00'}
                     placeholderTextColor={Colors.textMuted}
                     style={[styles.amountInput, { fontSize: 18 }]}
                   />
                 </View>
               </View>
             </View>
+
+            {/* Live Offline Foreign-Currency Conversion Banner */}
+            {isForeignCurrency && (
+              <View style={styles.fxBanner}>
+                <View style={{ flex: 1, gap: 2 }}>
+                  <Text style={styles.fxBannerMain}>
+                    {currentParsedAmount && currentParsedAmount > 0
+                      ? `${formatCurrency(currentParsedAmount, activeCurrency)}  →  ${formatMoney(
+                          convertCurrency(
+                            currentParsedAmount,
+                            activeCurrency,
+                            currency,
+                            fxRates
+                          )
+                        )}`
+                      : t.fxBannerHint(activeCurrency, currency)}
+                  </Text>
+                  <Text style={styles.fxBannerSub}>
+                    {getFriendlyRatePair(currency, activeCurrency, fxRates).formatted}
+                  </Text>
+                </View>
+                <Pressable onPress={openQuickFxEdit} style={styles.fxEditBtn}>
+                  <Text style={styles.fxEditBtnText}>{t.fxEditRateBtn}</Text>
+                </Pressable>
+              </View>
+            )}
 
             {/* Receipt Split Bar (visible whenever an amount is entered) */}
             {currentParsedAmount !== null && currentParsedAmount > 0 && (
@@ -955,7 +1244,10 @@ export default function ScanScreen() {
               items={draftItems}
               onChange={setDraftItems}
               receiptTotal={currentParsedAmount}
-              onApplyItemsSum={(sum) => setAmountText(formatEditableAmount(sum, currency))}
+              currencyOverride={activeCurrency}
+              onApplyItemsSum={(sum) =>
+                setAmountText(formatEditableAmount(sum, activeCurrency))
+              }
             />
 
             <Text style={styles.label}>{t.notesOptionalLabel}</Text>
@@ -1088,6 +1380,48 @@ export default function ScanScreen() {
               </Pressable>
               <Pressable
                 onPress={handleCustomSplitSubmit}
+                style={styles.modalConfirmBtn}
+              >
+                <Text style={styles.modalConfirmText}>{t.splitApplyBtn}</Text>
+              </Pressable>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Quick Offline Exchange Rate Edit Modal */}
+      <Modal
+        visible={showFxEditModal}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowFxEditModal(false)}
+      >
+        <View style={styles.centerBackdrop}>
+          <View style={styles.centerCard}>
+            <Text style={styles.modalTitle}>{t.fxQuickEditTitle}</Text>
+            {isForeignCurrency && (
+              <Text style={styles.fxModalSub}>
+                {`1 ${getFriendlyRatePair(currency, activeCurrency, fxRates).unitCode} = ? ${
+                  getFriendlyRatePair(currency, activeCurrency, fxRates).quoteCode
+                }`}
+              </Text>
+            )}
+            <TextInput
+              value={fxRateInput}
+              onChangeText={setFxRateInput}
+              keyboardType="decimal-pad"
+              autoFocus
+              style={styles.input}
+            />
+            <View style={styles.modalBtnRow}>
+              <Pressable
+                onPress={() => setShowFxEditModal(false)}
+                style={styles.modalCancelBtn}
+              >
+                <Text style={styles.modalCancelText}>{t.cancel}</Text>
+              </Pressable>
+              <Pressable
+                onPress={() => void handleSaveQuickFxRate()}
                 style={styles.modalConfirmBtn}
               >
                 <Text style={styles.modalConfirmText}>{t.splitApplyBtn}</Text>
@@ -1661,5 +1995,139 @@ const styles = StyleSheet.create({
   modalConfirmText: {
     color: Colors.white,
     fontWeight: '700',
+  },
+  ocrOptionsRow: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  ocrOptPill: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    paddingVertical: 8,
+    paddingHorizontal: 10,
+    borderRadius: 12,
+    backgroundColor: Colors.surface,
+    borderWidth: 1,
+    borderColor: Colors.border,
+  },
+  ocrOptPillActive: {
+    borderColor: Colors.primary,
+    backgroundColor: Colors.primarySoft,
+  },
+  ocrOptText: {
+    color: Colors.textSecondary,
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  previewImgWrap: {
+    backgroundColor: Colors.bg,
+    overflow: 'hidden',
+  },
+  previewToolsRow: {
+    flexDirection: 'row',
+    gap: 8,
+    padding: 10,
+    borderTopWidth: 1,
+    borderTopColor: Colors.border,
+    backgroundColor: Colors.surface,
+  },
+  previewToolBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 5,
+    paddingVertical: 8,
+    borderRadius: 10,
+    backgroundColor: Colors.bg,
+    borderWidth: 1,
+    borderColor: Colors.border,
+  },
+  previewToolBtnActive: {
+    borderColor: Colors.primary,
+    backgroundColor: Colors.primarySoft,
+  },
+  previewToolText: {
+    color: Colors.text,
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  fxPickerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 4,
+  },
+  fxPickerLabel: {
+    color: Colors.textSecondary,
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  fxChipsRow: {
+    gap: 6,
+    alignItems: 'center',
+  },
+  fxChip: {
+    paddingHorizontal: 9,
+    paddingVertical: 5,
+    borderRadius: 8,
+    backgroundColor: Colors.bg,
+    borderWidth: 1,
+    borderColor: Colors.border,
+  },
+  fxChipActive: {
+    borderColor: Colors.primary,
+    backgroundColor: Colors.primarySoft,
+  },
+  fxChipForeign: {
+    borderColor: Colors.accent,
+    backgroundColor: Colors.accentSoft,
+  },
+  fxChipText: {
+    color: Colors.textSecondary,
+    fontSize: 11,
+    fontWeight: '600',
+  },
+  fxBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    backgroundColor: Colors.accentSoft,
+    borderWidth: 1,
+    borderColor: Colors.accent,
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 9,
+  },
+  fxBannerMain: {
+    color: Colors.text,
+    fontSize: 13,
+    fontWeight: '800',
+  },
+  fxBannerSub: {
+    color: Colors.accent,
+    fontSize: 11,
+    fontWeight: '600',
+  },
+  fxEditBtn: {
+    backgroundColor: Colors.surface,
+    borderWidth: 1,
+    borderColor: Colors.accent,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 8,
+  },
+  fxEditBtnText: {
+    color: Colors.accent,
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  fxModalSub: {
+    color: Colors.textSecondary,
+    fontSize: 13,
+    fontWeight: '600',
   },
 });

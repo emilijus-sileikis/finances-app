@@ -386,6 +386,24 @@ const EN = {
   biometricLockedSub: 'Your local finances are protected. Authenticate to continue.',
   biometricUnlockBtn: 'Unlock',
   biometricFailedHint: 'Authentication cancelled or failed. Tap Unlock to try again.',
+
+  // Receipt Crop, High-Contrast OCR & Foreign Trip Currency (v1.4)
+  cropPhotoToggle: 'Crop photo',
+  highContrastToggle: 'High-contrast OCR',
+  rotateRescanBtn: 'Rotate 90°',
+  contrastOnTag: 'High-Contrast: ON',
+  contrastOffTag: 'High-Contrast: OFF',
+  receiptCurrencyLabel: 'Currency:',
+  fxBannerHint: (from: string, to: string) =>
+    `Enter ${from} amount — auto-converts to ${to} on save`,
+  fxEditRateBtn: 'Edit rate',
+  fxQuickEditTitle: 'Offline Exchange Rate',
+  fxOriginalNote: (orig: string) => `Orig: ${orig}`,
+  fxRatesBtn: 'Edit Offline Exchange Rates',
+  fxRatesModalTitle: 'Offline Exchange Rates',
+  fxRatesModalSub:
+    'Used when scanning or entering foreign-currency receipts during trips (100% offline).',
+  fxResetDefaultsBtn: 'Reset Default Rates',
 };
 
 export type TranslationSet = typeof EN;
@@ -730,6 +748,24 @@ const LT: TranslationSet = {
   biometricLockedSub: 'Jūsų finansai apsaugoti. Patvirtinkite tapatybę, kad tęstumėte.',
   biometricUnlockBtn: 'Atrakinti',
   biometricFailedHint: 'Patvirtinimas atšauktas arba nepavyko. Paspauskite „Atrakinti“, kad bandytumėte dar kartą.',
+
+  // Receipt Crop, High-Contrast OCR & Foreign Trip Currency (v1.4)
+  cropPhotoToggle: 'Apkirpti nuotrauką',
+  highContrastToggle: 'Kontrastingas OCR',
+  rotateRescanBtn: 'Pasukti 90°',
+  contrastOnTag: 'Kontrastas: ĮJ.',
+  contrastOffTag: 'Kontrastas: IŠJ.',
+  receiptCurrencyLabel: 'Valiuta:',
+  fxBannerHint: (from: string, to: string) =>
+    `Įveskite sumą ${from} — išsaugant konvertuos į ${to}`,
+  fxEditRateBtn: 'Keisti kursą',
+  fxQuickEditTitle: 'Valiutos kursas (be interneto)',
+  fxOriginalNote: (orig: string) => `Orig.: ${orig}`,
+  fxRatesBtn: 'Redaguoti valiutų kursus',
+  fxRatesModalTitle: 'Valiutų kursai (be interneto)',
+  fxRatesModalSub:
+    'Naudojami skenuojant ar įvedant užsienio valiutos čekius kelionėse (veikia 100% be interneto).',
+  fxResetDefaultsBtn: 'Atstatyti numatytuosius kursus',
 };
 
 export const TRANSLATIONS: Record<Language, TranslationSet> = {

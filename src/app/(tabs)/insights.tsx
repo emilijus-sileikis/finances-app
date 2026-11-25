@@ -18,9 +18,13 @@ import {
   CUSTOM_CATEGORY_COLORS,
   CUSTOM_CATEGORY_ICONS,
 } from '@/constants/categories';
-import { CURRENCIES, formatEditableAmount } from '@/constants/currencies';
+import { CURRENCIES, formatEditableAmount, type CurrencyCode } from '@/constants/currencies';
 import { useFinances } from '@/db/FinanceContext';
 import { parseBackupJson } from '@/services/backupRestore';
+import {
+  computeUpdatedEurRate,
+  getFriendlyRatePair,
+} from '@/services/fxRates';
 import {
   analyzeProductPrices,
   getTopTrackedProducts,
@@ -62,6 +66,9 @@ export default function InsightsScreen() {
     currencyMeta,
     setCurrency,
     formatMoney,
+    fxRates,
+    updateFxRate,
+    resetFxRates,
     monthlyIncome,
     setMonthlyIncome,
     biometricLockEnabled,
@@ -121,6 +128,11 @@ export default function InsightsScreen() {
   const [ruleMerchantInput, setRuleMerchantInput] = useState('');
   const [ruleCategoryInput, setRuleCategoryInput] = useState<CategoryId>('groceries');
   const [showAllRules, setShowAllRules] = useState(false);
+
+  // Offline FX Rates modal
+  const [showFxModal, setShowFxModal] = useState(false);
+  const [editingFxCode, setEditingFxCode] = useState<CurrencyCode | null>(null);
+  const [fxValueInput, setFxValueInput] = useState('');
 
   const monthExpenses = useMemo(
     () => getMonthExpenses(expenses, selectedMonth),
@@ -365,6 +377,28 @@ export default function InsightsScreen() {
     } catch {
       Alert.alert(t.biometricUnavailableTitle, t.biometricUnavailableBody);
     }
+  };
+
+  const openEditFxRate = (foreignCode: CurrencyCode) => {
+    const pair = getFriendlyRatePair(currency, foreignCode, fxRates);
+    setEditingFxCode(foreignCode);
+    setFxValueInput(String(pair.value));
+  };
+
+  const handleSaveFxRate = async () => {
+    if (!editingFxCode) return;
+    const parsed = parseFlexibleAmount(fxValueInput);
+    if (parsed === null || parsed <= 0) {
+      Alert.alert(t.alertAmountTitle, t.alertAmountBody);
+      return;
+    }
+    const pair = getFriendlyRatePair(currency, editingFxCode, fxRates);
+    const updated = computeUpdatedEurRate(pair.unitCode, pair.quoteCode, parsed, fxRates);
+    if (updated) {
+      await updateFxRate(updated.code, updated.eurRate);
+    }
+    setEditingFxCode(null);
+    setFxValueInput('');
   };
 
   const handleImportBackup = async () => {
@@ -1009,6 +1043,10 @@ export default function InsightsScreen() {
               );
             })}
           </View>
+          <Pressable onPress={() => setShowFxModal(true)} style={styles.primaryOutlineBtn}>
+            <Ionicons name="swap-horizontal-outline" size={16} color={Colors.primary} />
+            <Text style={styles.primaryOutlineText}>{t.fxRatesBtn}</Text>
+          </Pressable>
         </View>
 
         {/* Language Setting */}
@@ -1394,6 +1432,85 @@ export default function InsightsScreen() {
 
               <Pressable onPress={handleSaveRule} style={styles.createBtn}>
                 <Text style={styles.createBtnText}>{t.ruleSaveBtn}</Text>
+              </Pressable>
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Offline Exchange Rates Modal */}
+      <Modal
+        visible={showFxModal}
+        transparent
+        animationType="slide"
+        onRequestClose={() => {
+          setShowFxModal(false);
+          setEditingFxCode(null);
+        }}
+      >
+        <View style={styles.sheetBackdrop}>
+          <View style={styles.sheet}>
+            <View style={styles.sheetHeader}>
+              <Text style={styles.modalTitle}>{t.fxRatesModalTitle}</Text>
+              <Pressable
+                onPress={() => {
+                  setShowFxModal(false);
+                  setEditingFxCode(null);
+                }}
+              >
+                <Ionicons name="close" size={22} color={Colors.text} />
+              </Pressable>
+            </View>
+            <ScrollView contentContainerStyle={styles.sheetBody}>
+              <Text style={styles.backupNote}>{t.fxRatesModalSub}</Text>
+              {CURRENCIES.filter((c) => c.code !== currency).map((cur) => {
+                const pair = getFriendlyRatePair(currency, cur.code, fxRates);
+                const isEditing = editingFxCode === cur.code;
+                return (
+                  <View key={cur.code} style={styles.fxRow}>
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.manageTitle}>
+                        {cur.symbol} {cur.code} — {cur.name}
+                      </Text>
+                      {isEditing ? (
+                        <View style={styles.fxEditRow}>
+                          <Text style={styles.fxEditPrefix}>1 {pair.unitCode} =</Text>
+                          <TextInput
+                            value={fxValueInput}
+                            onChangeText={setFxValueInput}
+                            keyboardType="decimal-pad"
+                            autoFocus
+                            style={styles.fxInput}
+                          />
+                          <Text style={styles.fxEditPrefix}>{pair.quoteCode}</Text>
+                          <Pressable onPress={handleSaveFxRate} style={styles.fxSaveBtn}>
+                            <Ionicons name="checkmark" size={16} color={Colors.white} />
+                          </Pressable>
+                        </View>
+                      ) : (
+                        <Text style={styles.manageSub}>{pair.formatted}</Text>
+                      )}
+                    </View>
+                    {!isEditing && (
+                      <Pressable
+                        onPress={() => openEditFxRate(cur.code)}
+                        style={styles.contribBtn}
+                      >
+                        <Text style={styles.contribBtnText}>{t.editIncomeBtn}</Text>
+                      </Pressable>
+                    )}
+                  </View>
+                );
+              })}
+
+              <Pressable
+                onPress={() => {
+                  void resetFxRates();
+                  setEditingFxCode(null);
+                }}
+                style={styles.showMoreBtn}
+              >
+                <Text style={styles.showMoreText}>{t.fxResetDefaultsBtn}</Text>
               </Pressable>
             </ScrollView>
           </View>
@@ -2153,5 +2270,42 @@ const styles = StyleSheet.create({
   catChipText: {
     color: Colors.textSecondary,
     fontSize: 12,
+  },
+  fxRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    paddingVertical: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.border,
+  },
+  fxEditRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginTop: 6,
+  },
+  fxEditPrefix: {
+    color: Colors.textSecondary,
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  fxInput: {
+    minWidth: 74,
+    backgroundColor: Colors.bg,
+    borderWidth: 1,
+    borderColor: Colors.primary,
+    borderRadius: 8,
+    paddingHorizontal: 8,
+    paddingVertical: 5,
+    color: Colors.text,
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  fxSaveBtn: {
+    backgroundColor: Colors.primary,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 8,
   },
 });
