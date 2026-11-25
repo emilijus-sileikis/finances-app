@@ -14,6 +14,7 @@ import * as LocalAuthentication from 'expo-local-authentication';
 import { Ionicons } from '@expo/vector-icons';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { TrendBarChart } from '@/components/TrendBarChart';
+import { YearReviewModal } from '@/components/YearReviewModal';
 import {
   CUSTOM_CATEGORY_COLORS,
   CUSTOM_CATEGORY_ICONS,
@@ -133,6 +134,9 @@ export default function InsightsScreen() {
   const [showFxModal, setShowFxModal] = useState(false);
   const [editingFxCode, setEditingFxCode] = useState<CurrencyCode | null>(null);
   const [fxValueInput, setFxValueInput] = useState('');
+
+  // Year in Review modal
+  const [showYearReview, setShowYearReview] = useState(false);
 
   const monthExpenses = useMemo(
     () => getMonthExpenses(expenses, selectedMonth),
@@ -478,6 +482,23 @@ export default function InsightsScreen() {
             {t.savingsSub(formatMonthLabel(selectedMonth, language))}
           </Text>
         </View>
+
+        {/* Year in Review Banner */}
+        <Pressable
+          onPress={() => setShowYearReview(true)}
+          style={styles.yearBannerCard}
+        >
+          <View style={styles.yearBannerIcon}>
+            <Ionicons name="sparkles-outline" size={20} color={Colors.primary} />
+          </View>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.manageTitle}>
+              {t.yearReviewBannerTitle(Number(selectedYear))}
+            </Text>
+            <Text style={styles.manageSub}>{t.yearReviewBannerSub}</Text>
+          </View>
+          <Ionicons name="chevron-forward" size={18} color={Colors.primary} />
+        </Pressable>
 
         {/* Monthly Income & Net Savings */}
         <View style={styles.sectionHeaderRow}>
@@ -1516,6 +1537,12 @@ export default function InsightsScreen() {
           </View>
         </View>
       </Modal>
+
+      <YearReviewModal
+        visible={showYearReview}
+        initialYear={Number(selectedYear)}
+        onClose={() => setShowYearReview(false)}
+      />
     </SafeAreaView>
   );
 }
@@ -2307,5 +2334,23 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
     paddingVertical: 6,
     borderRadius: 8,
+  },
+  yearBannerCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    backgroundColor: Colors.surface,
+    borderRadius: 16,
+    padding: 13,
+    borderWidth: 1,
+    borderColor: Colors.primary,
+  },
+  yearBannerIcon: {
+    width: 38,
+    height: 38,
+    borderRadius: 11,
+    backgroundColor: Colors.primarySoft,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
 });

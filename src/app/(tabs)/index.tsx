@@ -13,6 +13,8 @@ import { Ionicons } from '@expo/vector-icons';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { DonutChart } from '@/components/DonutChart';
 import { ExpenseDetailModal } from '@/components/ExpenseDetailModal';
+import { SpendingCalendarCard } from '@/components/SpendingCalendarCard';
+import { YearReviewModal } from '@/components/YearReviewModal';
 import { useFinances } from '@/db/FinanceContext';
 import { isPdfUri } from '@/services/receiptStorage';
 import { computeCategoryTotals, getMonthExpenses } from '@/services/savingsEngine';
@@ -51,6 +53,7 @@ export default function OverviewScreen() {
 
   const [selectedExpense, setSelectedExpense] = useState<Expense | null>(null);
   const [expandedCategory, setExpandedCategory] = useState<CategoryId | null>(null);
+  const [showYearReview, setShowYearReview] = useState(false);
 
   const panResponder = useMemo(
     () =>
@@ -171,23 +174,34 @@ export default function OverviewScreen() {
             <Text style={styles.appTitle}>{t.appTitle}</Text>
             <Text style={styles.appSub}>{t.appSub(currency)}</Text>
           </View>
-          <View style={styles.langPill}>
-            <Pressable
-              onPress={() => setLanguage('en')}
-              style={[styles.langBtn, language === 'en' && styles.langBtnActive]}
-            >
-              <Text style={[styles.langText, language === 'en' && styles.langTextActive]}>
-                EN
-              </Text>
-            </Pressable>
-            <Pressable
-              onPress={() => setLanguage('lt')}
-              style={[styles.langBtn, language === 'lt' && styles.langBtnActive]}
-            >
-              <Text style={[styles.langText, language === 'lt' && styles.langTextActive]}>
-                LT
-              </Text>
-            </Pressable>
+          <View style={styles.topRightRow}>
+            {expenses.length > 0 && (
+              <Pressable
+                onPress={() => setShowYearReview(true)}
+                style={styles.wrappedPill}
+              >
+                <Ionicons name="sparkles-outline" size={13} color={Colors.primary} />
+                <Text style={styles.wrappedPillText}>{selectedMonth.slice(0, 4)}</Text>
+              </Pressable>
+            )}
+            <View style={styles.langPill}>
+              <Pressable
+                onPress={() => setLanguage('en')}
+                style={[styles.langBtn, language === 'en' && styles.langBtnActive]}
+              >
+                <Text style={[styles.langText, language === 'en' && styles.langTextActive]}>
+                  EN
+                </Text>
+              </Pressable>
+              <Pressable
+                onPress={() => setLanguage('lt')}
+                style={[styles.langBtn, language === 'lt' && styles.langBtnActive]}
+              >
+                <Text style={[styles.langText, language === 'lt' && styles.langTextActive]}>
+                  LT
+                </Text>
+              </Pressable>
+            </View>
           </View>
         </View>
 
@@ -548,6 +562,13 @@ export default function OverviewScreen() {
               )}
             </View>
 
+            {/* Spending Calendar Heatmap & No-Spend Streak */}
+            <SpendingCalendarCard
+              monthKey={selectedMonth}
+              monthExpenses={monthExpenses}
+              onSelectExpense={setSelectedExpense}
+            />
+
             {/* Recent Expenses */}
             <View style={styles.sectionHeader}>
               <Text style={styles.sectionTitle}>{t.recentActivity}</Text>
@@ -603,6 +624,12 @@ export default function OverviewScreen() {
         onSave={editExpense}
         onDelete={removeExpense}
       />
+
+      <YearReviewModal
+        visible={showYearReview}
+        initialYear={Number(selectedMonth.slice(0, 4))}
+        onClose={() => setShowYearReview(false)}
+      />
     </SafeAreaView>
   );
 }
@@ -639,6 +666,27 @@ const styles = StyleSheet.create({
     color: Colors.primary,
     fontSize: 11,
     fontWeight: '600',
+  },
+  topRightRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  wrappedPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: Colors.primarySoft,
+    borderWidth: 1,
+    borderColor: Colors.primary,
+    paddingHorizontal: 9,
+    paddingVertical: 6,
+    borderRadius: 10,
+  },
+  wrappedPillText: {
+    color: Colors.primary,
+    fontSize: 11,
+    fontWeight: '800',
   },
   langPill: {
     flexDirection: 'row',
