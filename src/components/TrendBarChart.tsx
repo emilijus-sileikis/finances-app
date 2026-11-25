@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 import Svg, { Rect, Text as SvgText } from 'react-native-svg';
 import {
@@ -6,8 +6,9 @@ import {
   getCurrencyMeta,
   type CurrencyCode,
 } from '@/constants/currencies';
+import { useThemeColors } from '@/db/FinanceContext';
 import type { Language } from '@/i18n/translations';
-import { Colors } from '@/theme/colors';
+import type { ThemeColors } from '@/theme/colors';
 import { formatShortMonth } from '@/utils/format';
 
 interface TrendPoint {
@@ -30,6 +31,8 @@ export function TrendBarChart({
   currency = 'EUR',
   emptyLabel = 'Add expenses to see your 6-month trend',
 }: TrendBarChartProps) {
+  const Colors = useThemeColors();
+  const styles = useMemo(() => createStyles(Colors), [Colors]);
   const scale = getCurrencyMeta(currency).eurRateApprox;
   const maxVal = Math.max(100 * scale, ...data.map((d) => d.total));
   const chartHeight = 148;
@@ -98,14 +101,15 @@ export function TrendBarChart({
   );
 }
 
-const styles = StyleSheet.create({
-  container: {
-    width: '100%',
-    alignItems: 'center',
-  },
-  emptyNote: {
-    color: Colors.textMuted,
-    fontSize: 12,
-    marginTop: 4,
-  },
-});
+const createStyles = (Colors: ThemeColors) =>
+  StyleSheet.create({
+    container: {
+      width: '100%',
+      alignItems: 'center',
+    },
+    emptyNote: {
+      color: Colors.textMuted,
+      fontSize: 12,
+      marginTop: 4,
+    },
+  });

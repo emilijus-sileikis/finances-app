@@ -14,7 +14,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useFinances } from '@/db/FinanceContext';
 import { getMonthExpenses } from '@/services/savingsEngine';
-import { Colors } from '@/theme/colors';
+import type { ThemeColors } from '@/theme/colors';
 import type { CategoryId, RecurringFrequency } from '@/types/finance';
 import {
   formatMonthLabel,
@@ -24,6 +24,7 @@ import {
 
 export default function BudgetsScreen() {
   const {
+    colors: Colors,
     language,
     t,
     currency,
@@ -59,6 +60,7 @@ export default function BudgetsScreen() {
   const [recFreq, setRecFreq] = useState<RecurringFrequency>('monthly');
   const [recDay, setRecDay] = useState('1');
   const [recAutoLog, setRecAutoLog] = useState(true);
+  const styles = useMemo(() => createStyles(Colors), [Colors]);
 
   const monthExpenses = useMemo(
     () => getMonthExpenses(expenses, selectedMonth),
@@ -611,7 +613,7 @@ export default function BudgetsScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const createStyles = (Colors: ThemeColors) => StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: Colors.bg,

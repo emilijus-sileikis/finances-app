@@ -11,7 +11,7 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import { useFinances } from '@/db/FinanceContext';
 import { computeYearReview, getAvailableYears } from '@/services/yearReview';
-import { Colors } from '@/theme/colors';
+import type { ThemeColors } from '@/theme/colors';
 import { formatDisplayDate, formatMonthLabel } from '@/utils/format';
 
 interface YearReviewModalProps {
@@ -36,7 +36,9 @@ export function YearReviewModal({
     formatMoney,
     resolveCategoryMeta,
     resolveCategoryLabel,
+    colors: Colors,
   } = useFinances();
+  const styles = useMemo(() => createStyles(Colors), [Colors]);
 
   const availableYears = useMemo(() => getAvailableYears(expenses), [expenses]);
   const [pickedYear, setPickedYear] = useState<number | null>(null);
@@ -436,7 +438,7 @@ export function YearReviewModal({
   );
 }
 
-const styles = StyleSheet.create({
+const createStyles = (Colors: ThemeColors) => StyleSheet.create({
   backdrop: {
     flex: 1,
     backgroundColor: 'rgba(0,0,0,0.78)',

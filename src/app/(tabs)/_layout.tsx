@@ -1,13 +1,14 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import { Platform, StyleSheet, View } from 'react-native';
 import { Tabs } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useFinances } from '@/db/FinanceContext';
-import { Colors } from '@/theme/colors';
+import type { ThemeColors } from '@/theme/colors';
 
 export default function TabsLayout() {
-  const { t } = useFinances();
+  const { t, colors: Colors } = useFinances();
+  const styles = useMemo(() => createStyles(Colors), [Colors]);
   const insets = useSafeAreaInsets();
   const bottomPad = Math.max(insets.bottom, Platform.OS === 'android' ? 10 : 12);
 
@@ -103,13 +104,14 @@ export default function TabsLayout() {
   );
 }
 
-const styles = StyleSheet.create({
-  scanBadge: {
-    width: 40,
-    height: 32,
-    borderRadius: 12,
-    backgroundColor: Colors.primary,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-});
+const createStyles = (Colors: ThemeColors) =>
+  StyleSheet.create({
+    scanBadge: {
+      width: 40,
+      height: 32,
+      borderRadius: 12,
+      backgroundColor: Colors.primary,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+  });

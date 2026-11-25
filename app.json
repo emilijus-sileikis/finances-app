@@ -3,10 +3,10 @@
     "name": "Finances",
     "slug": "finances",
     "scheme": "finances",
-    "version": "1.5.0",
+    "version": "1.6.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
-    "userInterfaceStyle": "dark",
+    "userInterfaceStyle": "automatic",
     "backgroundColor": "#090E1A",
     "splash": {
       "image": "./assets/splash-icon.png",

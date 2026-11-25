@@ -5,8 +5,7 @@ import { ShareIntentProvider, useShareIntentContext } from 'expo-share-intent';
 import { StatusBar } from 'expo-status-bar';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { BiometricLockGate } from '@/components/BiometricLockGate';
-import { FinanceProvider } from '@/db/FinanceContext';
-import { Colors } from '@/theme/colors';
+import { FinanceProvider, useFinances } from '@/db/FinanceContext';
 
 const isExpoGo = Constants.appOwnership === 'expo';
 
@@ -22,23 +21,31 @@ function ShareIntentNavigator() {
   return null;
 }
 
+function ThemedAppShell() {
+  const { resolvedTheme, colors } = useFinances();
+
+  return (
+    <BiometricLockGate>
+      <ShareIntentNavigator />
+      <StatusBar style={resolvedTheme === 'dark' ? 'light' : 'dark'} />
+      <Stack
+        screenOptions={{
+          headerShown: false,
+          contentStyle: { backgroundColor: colors.bg },
+        }}
+      >
+        <Stack.Screen name="(tabs)" />
+      </Stack>
+    </BiometricLockGate>
+  );
+}
+
 export default function RootLayout() {
   return (
     <ShareIntentProvider options={{ disabled: isExpoGo, resetOnBackground: true }}>
       <SafeAreaProvider>
         <FinanceProvider>
-          <BiometricLockGate>
-            <ShareIntentNavigator />
-            <StatusBar style="light" />
-            <Stack
-              screenOptions={{
-                headerShown: false,
-                contentStyle: { backgroundColor: Colors.bg },
-              }}
-            >
-              <Stack.Screen name="(tabs)" />
-            </Stack>
-          </BiometricLockGate>
+          <ThemedAppShell />
         </FinanceProvider>
       </SafeAreaProvider>
     </ShareIntentProvider>

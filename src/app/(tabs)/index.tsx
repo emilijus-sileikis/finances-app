@@ -18,7 +18,7 @@ import { YearReviewModal } from '@/components/YearReviewModal';
 import { useFinances } from '@/db/FinanceContext';
 import { isPdfUri } from '@/services/receiptStorage';
 import { computeCategoryTotals, getMonthExpenses } from '@/services/savingsEngine';
-import { Colors } from '@/theme/colors';
+import type { ThemeColors } from '@/theme/colors';
 import type { CategoryId, Expense } from '@/types/finance';
 import {
   formatDisplayDate,
@@ -31,6 +31,7 @@ import {
 export default function OverviewScreen() {
   const {
     ready,
+    colors: Colors,
     language,
     t,
     setLanguage,
@@ -54,6 +55,7 @@ export default function OverviewScreen() {
   const [selectedExpense, setSelectedExpense] = useState<Expense | null>(null);
   const [expandedCategory, setExpandedCategory] = useState<CategoryId | null>(null);
   const [showYearReview, setShowYearReview] = useState(false);
+  const styles = useMemo(() => createStyles(Colors), [Colors]);
 
   const panResponder = useMemo(
     () =>
@@ -634,7 +636,7 @@ export default function OverviewScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const createStyles = (Colors: ThemeColors) => StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: Colors.bg,

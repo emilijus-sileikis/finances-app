@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import {
   Alert,
   Image,
@@ -18,9 +18,9 @@ import {
   type EditableReceiptItem,
 } from '@/components/ReceiptItemsEditor';
 import { formatEditableAmount } from '@/constants/currencies';
-import { useFinances } from '@/db/FinanceContext';
+import { useFinances, useThemeColors } from '@/db/FinanceContext';
 import { isPdfUri, openPdfReceipt } from '@/services/receiptStorage';
-import { Colors } from '@/theme/colors';
+import type { ThemeColors } from '@/theme/colors';
 import type { CategoryId, Expense, UpdateExpenseInput } from '@/types/finance';
 import { isValidIsoDate, parseFlexibleAmount } from '@/utils/format';
 
@@ -37,6 +37,9 @@ export function ExpenseDetailModal({
   onSave,
   onDelete,
 }: ExpenseDetailModalProps) {
+  const Colors = useThemeColors();
+  const styles = useMemo(() => createStyles(Colors), [Colors]);
+
   return (
     <Modal visible={Boolean(expense)} animationType="slide" transparent onRequestClose={onClose}>
       <View style={styles.backdrop}>
@@ -67,7 +70,9 @@ function ExpenseDetailForm({
   onSave,
   onDelete,
 }: ExpenseDetailFormProps) {
-  const { t, currency, currencyMeta, allCategories, resolveCategoryLabel } = useFinances();
+  const { t, currency, currencyMeta, allCategories, resolveCategoryLabel, colors: Colors } =
+    useFinances();
+  const styles = useMemo(() => createStyles(Colors), [Colors]);
 
   const [title, setTitle] = useState(expense.title);
   const [merchant, setMerchant] = useState(expense.merchant);
@@ -291,7 +296,7 @@ function ExpenseDetailForm({
   );
 }
 
-const styles = StyleSheet.create({
+const createStyles = (Colors: ThemeColors) => StyleSheet.create({
   backdrop: {
     flex: 1,
     backgroundColor: 'rgba(0,0,0,0.72)',

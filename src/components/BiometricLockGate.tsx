@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   AppState,
   Image,
@@ -10,12 +10,14 @@ import {
 import * as LocalAuthentication from 'expo-local-authentication';
 import { Ionicons } from '@expo/vector-icons';
 import { useFinances } from '@/db/FinanceContext';
-import { Colors } from '@/theme/colors';
+import type { ThemeColors } from '@/theme/colors';
 
 const BACKGROUND_GRACE_MS = 15_000;
 
 export function BiometricLockGate({ children }: { children: React.ReactNode }) {
-  const { ready, t, biometricLockEnabled, appLocked, setAppLocked } = useFinances();
+  const { ready, t, colors: Colors, biometricLockEnabled, appLocked, setAppLocked } =
+    useFinances();
+  const styles = useMemo(() => createStyles(Colors), [Colors]);
   const [authError, setAuthError] = useState<string | null>(null);
   const authInFlightRef = useRef(false);
   const backgroundedAtRef = useRef<number | null>(null);
@@ -112,7 +114,7 @@ export function BiometricLockGate({ children }: { children: React.ReactNode }) {
   );
 }
 
-const styles = StyleSheet.create({
+const createStyles = (Colors: ThemeColors) => StyleSheet.create({
   root: {
     flex: 1,
     backgroundColor: Colors.bg,

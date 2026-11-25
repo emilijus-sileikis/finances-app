@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   Alert,
   Image,
@@ -55,7 +55,7 @@ import {
   saveReceiptFromBase64,
   saveReceiptFromUri,
 } from '@/services/receiptStorage';
-import { Colors } from '@/theme/colors';
+import type { ThemeColors } from '@/theme/colors';
 import type { CategoryId, QuickPreset } from '@/types/finance';
 import { getTodayIso, isValidIsoDate, parseFlexibleAmount } from '@/utils/format';
 
@@ -68,6 +68,7 @@ interface SplitSnapshot {
 
 export default function ScanScreen() {
   const {
+    colors: Colors,
     t,
     currency,
     currencyMeta,
@@ -135,6 +136,7 @@ export default function ScanScreen() {
   const [presetCategory, setPresetCategory] = useState<CategoryId>('dining');
   const [quickToast, setQuickToast] = useState<string | null>(null);
 
+  const styles = useMemo(() => createStyles(Colors), [Colors]);
   const activeCurrency: CurrencyCode = receiptCurrency ?? currency;
   const activeCurrencyMeta = getCurrencyMeta(activeCurrency);
   const isForeignCurrency = activeCurrency !== currency;
@@ -1442,7 +1444,7 @@ export default function ScanScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const createStyles = (Colors: ThemeColors) => StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: Colors.bg,

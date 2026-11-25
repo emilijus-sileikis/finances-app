@@ -442,6 +442,12 @@ const EN = {
   yearReviewTaxesPaid: 'Taxes & VAT',
   yearReviewNoSpendDays: 'No-Spend Days',
   yearReviewBiggestExpense: 'Biggest Single Expense',
+
+  // Light / Dark / System Theme (v1.6)
+  themeSectionTitle: 'Appearance',
+  themeDark: 'Dark',
+  themeLight: 'Light',
+  themeSystem: 'System',
 };
 
 export type TranslationSet = typeof EN;
@@ -842,6 +848,12 @@ const LT: TranslationSet = {
   yearReviewTaxesPaid: 'Mokesčiai ir PVM',
   yearReviewNoSpendDays: 'Dienos be išlaidų',
   yearReviewBiggestExpense: 'Didžiausias pirkinys',
+
+  // Light / Dark / System Theme (v1.6)
+  themeSectionTitle: 'Išvaizda',
+  themeDark: 'Tamsi',
+  themeLight: 'Šviesi',
+  themeSystem: 'Sistemos',
 };
 
 export const TRANSLATIONS: Record<Language, TranslationSet> = {

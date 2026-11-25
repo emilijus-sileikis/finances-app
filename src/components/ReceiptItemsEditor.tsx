@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import {
@@ -8,7 +8,7 @@ import {
   type CurrencyCode,
 } from '@/constants/currencies';
 import { useFinances } from '@/db/FinanceContext';
-import { Colors } from '@/theme/colors';
+import type { ThemeColors } from '@/theme/colors';
 import type { NewExpenseItemInput } from '@/types/finance';
 import { parseFlexibleAmount } from '@/utils/format';
 
@@ -59,7 +59,8 @@ export function ReceiptItemsEditor({
   onApplyItemsSum,
   currencyOverride,
 }: ReceiptItemsEditorProps) {
-  const { t, currency } = useFinances();
+  const { t, currency, colors: Colors } = useFinances();
+  const styles = useMemo(() => createStyles(Colors), [Colors]);
   const activeCode = currencyOverride ?? currency;
   const currencyMeta = getCurrencyMeta(activeCode);
   const formatMoney = (amount: number, showDecimals?: boolean) =>
@@ -202,7 +203,7 @@ export function ReceiptItemsEditor({
   );
 }
 
-const styles = StyleSheet.create({
+const createStyles = (Colors: ThemeColors) => StyleSheet.create({
   container: {
     backgroundColor: Colors.bg,
     borderRadius: 14,

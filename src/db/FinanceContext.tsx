@@ -1,4 +1,5 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
+import { useColorScheme } from 'react-native';
 import {
   addAmountToSavingsGoal,
   clearAllData,
@@ -56,6 +57,14 @@ import {
   type TranslationSet,
 } from '@/i18n/translations';
 import { deleteReceiptFile } from '@/services/receiptStorage';
+import {
+  getThemeColors,
+  isThemeMode,
+  resolveThemeMode,
+  type ResolvedTheme,
+  type ThemeColors,
+  type ThemeMode,
+} from '@/theme/colors';
 import type {
   CategoryBudget,
   CategoryId,
@@ -81,6 +90,10 @@ import {
 
 interface FinanceContextValue {
   ready: boolean;
+  themeMode: ThemeMode;
+  resolvedTheme: ResolvedTheme;
+  colors: ThemeColors;
+  setThemeMode: (mode: ThemeMode) => Promise<void>;
   language: Language;
   t: TranslationSet;
   setLanguage: (lang: Language) => Promise<void>;
@@ -143,7 +156,9 @@ interface FinanceContextValue {
 const FinanceContext = createContext<FinanceContextValue | null>(null);
 
 export function FinanceProvider({ children }: { children: React.ReactNode }) {
+  const systemColorScheme = useColorScheme();
   const [ready, setReady] = useState(false);
+  const [themeMode, setThemeModeState] = useState<ThemeMode>('dark');
   const [language, setLanguageState] = useState<Language>('en');
   const [currency, setCurrencyState] = useState<CurrencyCode>('EUR');
   const [customFxRates, setCustomFxRates] = useState<CustomFxRates>({});
@@ -184,13 +199,18 @@ export function FinanceProvider({ children }: { children: React.ReactNode }) {
     let active = true;
     (async () => {
       try {
-        const [savedLang, savedCurrency, savedIncome, savedLock, savedFx] = await Promise.all([
-          getAppSetting('language'),
-          getAppSetting('currency'),
-          getAppSetting('monthly_income'),
-          getAppSetting('biometric_lock_enabled'),
-          getAppSetting('custom_fx_rates'),
-        ]);
+        const [savedLang, savedCurrency, savedIncome, savedLock, savedFx, savedTheme] =
+          await Promise.all([
+            getAppSetting('language'),
+            getAppSetting('currency'),
+            getAppSetting('monthly_income'),
+            getAppSetting('biometric_lock_enabled'),
+            getAppSetting('custom_fx_rates'),
+            getAppSetting('theme_mode'),
+          ]);
+        if (active && isThemeMode(savedTheme)) {
+          setThemeModeState(savedTheme);
+        }
         if (active && (savedLang === 'en' || savedLang === 'lt')) {
           setLanguageState(savedLang);
         }
@@ -225,6 +245,18 @@ export function FinanceProvider({ children }: { children: React.ReactNode }) {
       active = false;
     };
   }, [refresh]);
+
+  const setThemeMode = useCallback(async (mode: ThemeMode) => {
+    setThemeModeState(mode);
+    await setAppSetting('theme_mode', mode);
+  }, []);
+
+  const resolvedTheme = useMemo(
+    () => resolveThemeMode(themeMode, systemColorScheme),
+    [themeMode, systemColorScheme]
+  );
+
+  const colors = useMemo(() => getThemeColors(resolvedTheme), [resolvedTheme]);
 
   const setLanguage = useCallback(async (lang: Language) => {
     setLanguageState(lang);
@@ -511,6 +543,10 @@ export function FinanceProvider({ children }: { children: React.ReactNode }) {
   const value = useMemo<FinanceContextValue>(
     () => ({
       ready,
+      themeMode,
+      resolvedTheme,
+      colors,
+      setThemeMode,
       language,
       t,
       setLanguage,
@@ -568,6 +604,10 @@ export function FinanceProvider({ children }: { children: React.ReactNode }) {
     }),
     [
       ready,
+      themeMode,
+      resolvedTheme,
+      colors,
+      setThemeMode,
       language,
       t,
       setLanguage,
@@ -633,4 +673,8 @@ export function useFinances(): FinanceContextValue {
     throw new Error('useFinances must be used inside FinanceProvider');
   }
   return ctx;
+}
+
+export function useThemeColors(): ThemeColors {
+  return useFinances().colors;
 }

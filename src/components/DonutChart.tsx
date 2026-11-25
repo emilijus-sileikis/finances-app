@@ -1,8 +1,9 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 import Svg, { Circle, G } from 'react-native-svg';
 import { formatCurrency, type CurrencyCode } from '@/constants/currencies';
-import { Colors } from '@/theme/colors';
+import { useThemeColors } from '@/db/FinanceContext';
+import type { ThemeColors } from '@/theme/colors';
 
 export interface DonutSlice {
   key: string;
@@ -28,6 +29,8 @@ export function DonutChart({
   strokeWidth = 24,
   subtitle = 'Total spent',
 }: DonutChartProps) {
+  const Colors = useThemeColors();
+  const styles = useMemo(() => createStyles(Colors), [Colors]);
   const radius = (size - strokeWidth) / 2;
   const circumference = 2 * Math.PI * radius;
   const center = size / 2;
@@ -86,27 +89,28 @@ export function DonutChart({
   );
 }
 
-const styles = StyleSheet.create({
-  wrapper: {
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  centerOverlay: {
-    position: 'absolute',
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingHorizontal: 18,
-  },
-  centerSubtitle: {
-    color: Colors.textSecondary,
-    fontSize: 12,
-    fontWeight: '500',
-    marginBottom: 2,
-  },
-  centerTotal: {
-    color: Colors.text,
-    fontSize: 22,
-    fontWeight: '700',
-    letterSpacing: -0.5,
-  },
-});
+const createStyles = (Colors: ThemeColors) =>
+  StyleSheet.create({
+    wrapper: {
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    centerOverlay: {
+      position: 'absolute',
+      alignItems: 'center',
+      justifyContent: 'center',
+      paddingHorizontal: 18,
+    },
+    centerSubtitle: {
+      color: Colors.textSecondary,
+      fontSize: 12,
+      fontWeight: '500',
+      marginBottom: 2,
+    },
+    centerTotal: {
+      color: Colors.text,
+      fontSize: 22,
+      fontWeight: '700',
+      letterSpacing: -0.5,
+    },
+  });

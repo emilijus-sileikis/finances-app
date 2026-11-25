@@ -16,7 +16,7 @@ import { useFinances } from '@/db/FinanceContext';
 import { analyzeProductPrices } from '@/services/priceHistory';
 import { exportExpensesCsv, isPdfUri } from '@/services/receiptStorage';
 import { getMonthExpenses } from '@/services/savingsEngine';
-import { Colors } from '@/theme/colors';
+import type { ThemeColors } from '@/theme/colors';
 import type { CategoryId, Expense } from '@/types/finance';
 import {
   formatDisplayDate,
@@ -26,6 +26,7 @@ import {
 
 export default function ExpensesScreen() {
   const {
+    colors: Colors,
     language,
     t,
     currency,
@@ -45,6 +46,7 @@ export default function ExpensesScreen() {
   const [showAllMonths, setShowAllMonths] = useState(false);
   const [expandedExpenseIds, setExpandedExpenseIds] = useState<Record<number, boolean>>({});
   const [activeExpense, setActiveExpense] = useState<Expense | null>(null);
+  const styles = useMemo(() => createStyles(Colors), [Colors]);
 
   const normalizedQuery = search.trim().toLowerCase();
 
@@ -392,7 +394,7 @@ export default function ExpensesScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const createStyles = (Colors: ThemeColors) => StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: Colors.bg,

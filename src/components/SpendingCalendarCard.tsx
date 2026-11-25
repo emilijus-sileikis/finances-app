@@ -3,7 +3,7 @@ import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useFinances } from '@/db/FinanceContext';
 import { computeMonthCalendar, type DaySpendSummary } from '@/services/calendarAnalytics';
-import { Colors } from '@/theme/colors';
+import type { ThemeColors } from '@/theme/colors';
 import type { Expense } from '@/types/finance';
 import { formatDisplayDate } from '@/utils/format';
 
@@ -16,7 +16,7 @@ interface SpendingCalendarCardProps {
 const WEEKDAYS_EN = ['M', 'T', 'W', 'T', 'F', 'S', 'S'];
 const WEEKDAYS_LT = ['Pr', 'An', 'Tr', 'Kt', 'Pn', 'Št', 'Sk'];
 
-function getTileStyle(cell: DaySpendSummary) {
+function getTileStyle(cell: DaySpendSummary, Colors: ThemeColors) {
   if (cell.isFuture) {
     return { bg: 'transparent', border: Colors.border, text: Colors.textMuted };
   }
@@ -44,7 +44,9 @@ export function SpendingCalendarCard({
     formatMoney,
     resolveCategoryMeta,
     resolveCategoryLabel,
+    colors: Colors,
   } = useFinances();
+  const styles = useMemo(() => createStyles(Colors), [Colors]);
 
   const [selectedIso, setSelectedIso] = useState<string | null>(null);
   const activeIso = selectedIso && selectedIso.startsWith(monthKey) ? selectedIso : null;
@@ -142,7 +144,7 @@ export function SpendingCalendarCard({
               if (!cell) {
                 return <View key={`blank_${wIdx}_${cIdx}`} style={styles.cellSpacer} />;
               }
-              const tone = getTileStyle(cell);
+              const tone = getTileStyle(cell, Colors);
               const isSelected = activeIso === cell.isoDate;
 
               return (
@@ -156,7 +158,7 @@ export function SpendingCalendarCard({
                     {
                       backgroundColor: tone.bg,
                       borderColor: isSelected
-                        ? Colors.white
+                        ? Colors.text
                         : cell.isToday
                           ? Colors.primary
                           : tone.border,
@@ -260,7 +262,7 @@ export function SpendingCalendarCard({
   );
 }
 
-const styles = StyleSheet.create({
+const createStyles = (Colors: ThemeColors) => StyleSheet.create({
   card: {
     backgroundColor: Colors.surface,
     borderRadius: 18,

@@ -41,7 +41,7 @@ import {
   generateSavingsTips,
   getMonthExpenses,
 } from '@/services/savingsEngine';
-import { Colors } from '@/theme/colors';
+import type { ThemeColors, ThemeMode } from '@/theme/colors';
 import type {
   CategoryId,
   CustomCategory,
@@ -60,6 +60,9 @@ const GOAL_COLORS = ['#10B981', '#38BDF8', '#A78BFA', '#F59E0B', '#EC4899', '#EF
 
 export default function InsightsScreen() {
   const {
+    colors: Colors,
+    themeMode,
+    setThemeMode,
     language,
     t,
     setLanguage,
@@ -137,6 +140,8 @@ export default function InsightsScreen() {
 
   // Year in Review modal
   const [showYearReview, setShowYearReview] = useState(false);
+
+  const styles = useMemo(() => createStyles(Colors), [Colors]);
 
   const monthExpenses = useMemo(
     () => getMonthExpenses(expenses, selectedMonth),
@@ -1070,6 +1075,43 @@ export default function InsightsScreen() {
           </Pressable>
         </View>
 
+        {/* Appearance / Theme Setting */}
+        <Text style={styles.sectionTitle}>{t.themeSectionTitle}</Text>
+        <View style={styles.card}>
+          <View style={styles.themeRow}>
+            {(
+              [
+                { mode: 'dark', icon: 'moon-outline', label: t.themeDark },
+                { mode: 'light', icon: 'sunny-outline', label: t.themeLight },
+                { mode: 'system', icon: 'phone-portrait-outline', label: t.themeSystem },
+              ] as { mode: ThemeMode; icon: IoniconName; label: string }[]
+            ).map((opt) => {
+              const active = themeMode === opt.mode;
+              return (
+                <Pressable
+                  key={opt.mode}
+                  onPress={() => void setThemeMode(opt.mode)}
+                  style={[styles.themeOption, active && styles.langOptionActive]}
+                >
+                  <Ionicons
+                    name={opt.icon}
+                    size={16}
+                    color={active ? Colors.primary : Colors.textMuted}
+                  />
+                  <Text
+                    style={[
+                      styles.themeOptionText,
+                      active && { color: Colors.text, fontWeight: '700' },
+                    ]}
+                  >
+                    {opt.label}
+                  </Text>
+                </Pressable>
+              );
+            })}
+          </View>
+        </View>
+
         {/* Language Setting */}
         <Text style={styles.sectionTitle}>{t.languageSectionTitle}</Text>
         <View style={styles.card}>
@@ -1547,7 +1589,7 @@ export default function InsightsScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const createStyles = (Colors: ThemeColors) => StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: Colors.bg,
@@ -2163,7 +2205,7 @@ const styles = StyleSheet.create({
   },
   colorDotActive: {
     borderWidth: 3,
-    borderColor: Colors.white,
+    borderColor: Colors.text,
     transform: [{ scale: 1.1 }],
   },
   createBtn: {
@@ -2352,5 +2394,26 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.primarySoft,
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  themeRow: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  themeOption: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    paddingVertical: 11,
+    borderRadius: 12,
+    backgroundColor: Colors.bg,
+    borderWidth: 1,
+    borderColor: Colors.border,
+  },
+  themeOptionText: {
+    color: Colors.textSecondary,
+    fontSize: 12,
+    fontWeight: '600',
   },
 });
