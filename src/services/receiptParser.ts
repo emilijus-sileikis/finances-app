@@ -25,28 +25,36 @@ function foldAccents(input: string): string {
     .normalize('NFC');
 }
 
+// Tier 1: explicit final payable totals (prioritized over generic "is viso")
+const PRIMARY_TOTAL_LINE_REGEX =
+  /\b(moketina\s*suma|kvito\s*suma|moketa\s*(?:negrynaisiais|grynaisiais|kortele)|moketi\s*(?:is\s*viso|viso)?|grand\s*total|amount\s*due|balance\s*due|total\s*eur|zu\s*zahlen|a\s*payer|banko\s*kortele|card\s*payment|suma\s*:)\b|(합계|총액|결제금액|받을금액|청구금액|승인금액|합\s*계|총\s*액)/i;
+
+// Tier 2: general total fallback
 const TOTAL_LINE_REGEX =
-  /\b(grand\s*total|amount\s*due|balance\s*due|total\s*eur|total|sum|suma|is\s*viso|viso|moketi|gesamt|zu\s*zahlen|betrag|a\s*payer|ttc|importe|totale|pirkinys|banko\s*kortele|card\s*payment)\b|(합계|총액|결제금액|받을금액|청구금액|승인금액|합\s*계|총\s*액)/i;
+  /\b(grand\s*total|amount\s*due|balance\s*due|total\s*eur|total|sum|suma|is\s*viso|viso|moketi|moketina|gesamt|zu\s*zahlen|betrag|a\s*payer|ttc|importe|totale|pirkinys|banko\s*kortele|card\s*payment)\b|(합계|총액|결제금액|받을금액|청구금액|승인금액|합\s*계|총\s*액)/i;
 
 const SUBTOTAL_EXCLUDE_REGEX =
-  /\b(sub\s*total|subtotal|be\s*pvm|suma\s*su\s*pvm|pvm\s*suma|netto|net\s*amount|change|graza|cash\s*tendered|sutaup|likutis|uzdirbti)\b|(거스름돈|과세물품|공급가액|면세물품)/i;
+  /\b(sub\s*total|subtotal|be\s*pvm|suma\s*su\s*pvm|pvm\s*suma|netto|net\s*amount|change|graza|cash\s*tendered|sutaup|likutis|uzdirbti|maximos\s*pinig|pinigu|pinigai|nurasyt|uz\s*kvita|taskai|balai|bonus|depozit)\b|(거스름돈|과세물품|공급가액|면세물품)/i;
 
 const TAX_LINE_REGEX =
   /\b(vat|pvm|tax|taxes|mwst|ust|tva|iva|btw|moms|gpm|mokestis|mokesciai)\b|(부가세|부가가치세|세액)/i;
 
+// Lithuanian VAT table row, e.g. "A= 21,00%   8,81   1,85   10,66"
+const VAT_TABLE_ROW_REGEX = /^[A-Z]\s*=\s*\d{1,2}[.,]\d{1,2}\s*%/i;
+
 // Lines that signal the start of the receipt summary/discounts-recap/payment block.
 // Matched against accent-folded text!
 const SUMMARY_STOP_REGEX =
-  /\b(suteiktos\s*nuolaidos|nuolaidu\s*suvestin|jus\s*sutaupete|sutaupete|you\s*saved|mokejimas\s*kortele|bekontaktis\s*atsiskaitymas|is\s*viso|viso\s*mok|viso\b|moketi\b|grand\s*total|amount\s*due|balance\s*due|total\b|suma\s*mok|suma\b|gesamt|zu\s*zahlen|a\s*payer|banko\s*kortele|kortele\b|grynieji|graza|change\b|apmoketa|be\s*pvm|su\s*pvm|pvm\s*suma|pvm\s*\d|vat\s*\d|uzdirbti\s*mano)\b|(합계|총액|결제금액|받을금액|청구금액|부가세|공급가액|카드결제|신용카드|승인번호)/i;
+  /\b(suteiktos\s*nuolaidos|aciu\s*nuolaidos|nuolaidu\s*suvestin|jus\s*sutaupete|sutaupete|you\s*saved|mokejimas\s*kortele|bekontaktis\s*atsiskaitymas|kvito\s*suma|moketina\s*suma|moketa\s*(?:negrynaisiais|grynaisiais)|is\s*viso|viso\s*mok|viso\b|moketi\b|grand\s*total|amount\s*due|balance\s*due|total\b|suma\s*mok|suma\b|gesamt|zu\s*zahlen|a\s*payer|banko\s*kortele|kortele\b|grynieji|graza|change\b|apmoketa|be\s*pvm|su\s*pvm|pvm\s*suma|pvm\s*\d|vat\s*\d|depozitas\/imoka|uzdirbti\s*mano)\b|(합계|총액|결제금액|받을금액|청구금액|부가세|공급가액|카드결제|신용카드|승인번호)/i;
 
 // Non-item metadata/header/footer lines (matched against accent-folded text)
 const IGNORE_ITEM_LINE_REGEX =
-  /\b(uab\b|ab\b|mb\b|gmbh|ltd|llc|pvm\s*mok|imones\s*kod|moketojo\s*kod|kodas|kvitas|kvito\s*nr|elektroninis\s*kvitas|pirkejas|cekis|kasos|kasinink|parduotuv|adresas|gatve|vilnius|kaunas|klaipeda|siauliai|panevezys|tel\.|telefon|www\.|http|el\.\s*past|info\.|invoice|saskaita|receipt|visa\b|mastercard|maestro|terminal|autorizacijos|saugokite|patikrinimui|saugos\s*modulio|pardavimas|pirkinys|laikas|auth|aid:|pan:|rrn\b|taskai|lojalumo|mano\s*rimi|aciu|thank\s*you|sutaup|likutis|uzdirbti|balance|prekiu\s*kiekis|tarifas|pvm\b|vat\b|mwst\b|tva\b|tax\b|subtotal|sub\s*total|be\s*pvm|su\s*pvm|graza|grynieji|cash\b|kortele|card\b|verta\s*rinktis)\b|(사업자|대표자|영수증|거래일시|매장명|전화번호|승인번호|카드번호|포인트|적립)/i;
+  /\b(uab\b|ab\b|mb\b|gmbh|ltd|llc|pvm\s*mok|imones\s*kod|moketojo\s*kod|kodas|kvitas|kvito\s*nr|elektroninis\s*kvitas|pirkejas|cekis|kasos|kasa\s*nr|kasinink|parduotuv|adresas|gatve|vilnius|kaunas|klaipeda|siauliai|panevezys|tel\.|telefon|www\.|http|el\.\s*past|info\.|invoice|saskaita|receipt|visa\b|mastercard|maestro|terminal|autorizacijos|saugokite|patikrinimui|saugos\s*modulio|pardavimas|pirkinys|laikas|auth|aid:|pan:|rrn\b|taskai|lojalumo|mano\s*rimi|suteiktos\s*naudos|aciu\s*kortel|aciu,\s*kad|thank\s*you|sutaup|likutis|uzdirbti|balance|prekiu\s*kiekis|tarifas|pvm\b|vat\b|mwst\b|tva\b|tax\b|subtotal|sub\s*total|be\s*pvm|su\s*pvm|graza|grynieji|cash\b|kortele|card\b|verta\s*rinktis|pirkejo\s*amzius)\b|(사업자|대표자|영수증|거래일시|매장명|전화번호|승인번호|카드번호|포인트|적립)/i;
 
 const ADDRESS_LINE_REGEX = /\bg\.\s*\d+|\bpr\.\s*\d+|\bstr\.\s*\d+/i;
 
 const DISCOUNT_WORD_REGEX =
-  /\b(nuol\.?|nuolaida|akcija|kitos\s*akcijos|discount|rabatt|remise|descuento|coupon|kuponas|promo)\b|(할인|에누리|쿠폰)/i;
+  /\b(nuol\.?|nuolaida|akcija|kitos\s*akcijos|atsiskaityta\s*maximos|discount|rabatt|remise|descuento|coupon|kuponas|promo)\b|(할인|에누리|쿠폰)/i;
 
 // Inline post-discount final price line right under an item, e.g.:
 // "Nuol. -0,70   Galut. kaina 0,99" or OCR quirk "Nuol. -1,74 Galut, kaina 2,55"
@@ -255,11 +263,20 @@ export function extractLineItems(
   const maxItemPrice = isZeroDecimal ? 100000000 : 100000;
 
   const qtyDetailRegex =
-    /^(\d+(?:[.,]\d{1,3})?)\s*(?:vnt\.?|pcs\.?|kg|g|l|ml|pak\.?|개)?\s*[xX*×]\s*(?:€|\$|£|₩|¥|EUR\s*|KRW\s*)?(\d{1,3}(?:,\d{3})+|\d+[.,]\d{2}|\d{3,7})(?:\s*(?:€|\$|£|원|₩|¥|EUR|KRW))?(?:\s+(?:€|\$|£|₩|¥|EUR\s*)?([−-]?(?:\d{1,3}(?:,\d{3})+|\d+[.,]\d{2}|\d{3,7})))?(?:\s*(?:€|\$|£|원|₩|¥|EUR|KRW))?(?:\s+[A-Z*])?$/i;
+    /^(\d+(?:[.,]\d{1,3})?)\s*(?:vnt\.?|wnt\.?|pcs\.?|kg|g|l|ml|pak\.?|개)?\s*[xX*×]\s*(?:€|\$|£|₩|¥|EUR\s*|KRW\s*)?(\d{1,3}(?:,\d{3})+|\d+[.,]\d{2}|\d{3,7})(?:\s*(?:€|\$|£|원|₩|¥|EUR|KRW))?(?:\s+(?:€|\$|£|₩|¥|EUR\s*)?([−-]?(?:\d{1,3}(?:,\d{3})+|\d+[.,]\d{2}|\d{3,7})))?(?:\s*(?:€|\$|£|원|₩|¥|EUR|KRW))?(?:\s+[A-Z*])?$/i;
+
+  // Post-item Maxima quantity line, e.g. "0,95 X 2 vnt." or "1,49 X 2 wnt." or "0,500 kg X 3,20"
+  const postItemQtyRegex =
+    /^(\d+(?:[.,]\d{1,3})?)\s*(?:vnt\.?|wnt\.?|pcs\.?|kg|g|l|ml)?\s*[xX*×]\s*(\d+(?:[.,]\d{1,3})?)\s*(?:vnt\.?|wnt\.?|pcs\.?|kg|g|l|ml|pak\.?|€|EUR)?\.?$/i;
+
+  // Standalone price-only line when product name wrapped onto the previous line(s), e.g. "1,90 A" or "-0,41 A"
+  const standalonePriceRegex = isZeroDecimal
+    ? /^(?:₩|¥|KRW\s*|JPY\s*)?([−-]?\s*(?:\d{1,3}(?:,\d{3})+|\d{3,8}))(?:\s*(?:원|₩|¥|KRW|JPY))?(?:\s+[A-Z0-9*#]{1,2})?$/i
+    : /^(?:€|\$|£|EUR\s*|USD\s*|GBP\s*|PLN\s*)?([−-]?\s*\d{1,4}[.,]\d{2})(?:\s*(?:€|\$|£|zł|EUR|USD|GBP|PLN))?(?:\s+[A-Z0-9*#]{1,2})?$/i;
 
   const trailingPriceRegex = isZeroDecimal
-    ? /^(.*?)\s+(?:₩|¥|KRW\s*|JPY\s*)?([−-]?\s*(?:\d{1,3}(?:,\d{3})+|\d{3,8}))(?:\s*(?:원|₩|¥|KRW|JPY))?(?:\s+[A-Z0-9*]{1,2})?$/i
-    : /^(.*?)\s+(?:€|\$|£|EUR\s*|USD\s*|GBP\s*|PLN\s*)?([−-]?\s*\d{1,4}[.,]\d{2})(?:\s*(?:€|\$|£|zł|EUR|USD|GBP|PLN))?(?:\s+[A-Z0-9*]{1,2})?$/i;
+    ? /^(.*?)\s+(?:₩|¥|KRW\s*|JPY\s*)?([−-]?\s*(?:\d{1,3}(?:,\d{3})+|\d{3,8}))(?:\s*(?:원|₩|¥|KRW|JPY))?(?:\s+[A-Z0-9*#]{1,2})?$/i
+    : /^(.*?)\s+(?:€|\$|£|EUR\s*|USD\s*|GBP\s*|PLN\s*)?([−-]?\s*\d{1,4}[.,]\d{2})(?:\s*(?:€|\$|£|zł|EUR|USD|GBP|PLN))?(?:\s+[A-Z0-9*#]{1,2})?$/i;
 
   const leadingQtyRegex = /^(\d+(?:[.,]\d{1,2})?)\s*[xX*×]\s+(.+)$/;
 
@@ -363,6 +380,48 @@ export function extractLineItems(
       continue;
     }
 
+    // 2b. Post-item Maxima quantity row directly under an already-parsed item, e.g. "0,95 X 2 vnt."
+    const postQtyMatch = line.match(postItemQtyRegex);
+    if (postQtyMatch && pendingNameParts.length === 0) {
+      if (items.length > 0) {
+        const a = parseQuantity(postQtyMatch[1]);
+        const b = parseQuantity(postQtyMatch[2]);
+        const prev = items[items.length - 1];
+        if (a !== null && b !== null) {
+          // If line says "0,95 X 2 vnt.", qty is the side followed by vnt/pcs/kg or the integer side
+          const endsWithUnit = /(?:vnt|wnt|pcs|kg|g|l|ml|pak)\.?$/i.test(line);
+          const inferredQty = endsWithUnit
+            ? b
+            : Number.isInteger(b) && !Number.isInteger(a)
+              ? b
+              : a;
+          if (
+            inferredQty > 0 &&
+            inferredQty < 100 &&
+            Math.abs(a * b - Math.abs(prev.price)) <= 0.05
+          ) {
+            prev.quantity = inferredQty;
+          }
+        }
+      }
+      continue;
+    }
+
+    // 2c. Standalone price line belonging to wrapped pendingNameParts (e.g. "1,90 A" or "-0,41 A")
+    const soloPriceMatch = line.match(standalonePriceRegex);
+    if (soloPriceMatch && pendingNameParts.length > 0) {
+      const price = parseFlexibleAmount(soloPriceMatch[1].replace(/\s/g, ''), true);
+      if (price !== null && price !== 0 && Math.abs(price) <= maxItemPrice) {
+        const name = cleanItemName(pendingNameParts.join(' '));
+        const letterCount = (name.match(/[A-Za-zÀ-ž가-힣]/g) ?? []).length;
+        if (letterCount >= 2 && name.length >= 2) {
+          items.push({ name, quantity: 1, price });
+        }
+      }
+      pendingNameParts = [];
+      continue;
+    }
+
     // Filter out headers, addresses, VAT summaries, payment lines, etc.
     const isDiscount = DISCOUNT_WORD_REGEX.test(folded);
     if (
@@ -382,6 +441,14 @@ export function extractLineItems(
       let rawName = rawNameClean;
       const rawPriceStr = priceMatch[2].replace(/\s/g, '');
       const price = parseFlexibleAmount(rawPriceStr, true);
+
+      // A promo/discount description like "AČIŪ nuolaida prekei: ... 2 vnt už 1,49"
+      // ends with a positive deal price while the actual negative discount ("-0,41 A")
+      // is on the next line — buffer it as a pending discount name instead of adding +1.49!
+      if (isDiscount && price !== null && price > 0) {
+        pendingNameParts = [line];
+        continue;
+      }
 
       if (price === null || price === 0 || Math.abs(price) > maxItemPrice) {
         pendingNameParts = [];
@@ -543,26 +610,33 @@ export function parseReceiptText(
   const merchant = extractMerchant(lines);
   const date = extractDate(rawText);
 
-  let bestTotal: number | null = null;
-  for (let i = lines.length - 1; i >= 0; i--) {
-    const line = lines[i];
-    const folded = foldAccents(line);
-    if (SUBTOTAL_EXCLUDE_REGEX.test(folded)) continue;
-    if (TOTAL_LINE_REGEX.test(folded)) {
-      const nums = extractNumbersFromLine(line, isZeroDecimal);
-      if (nums.length > 0) {
-        bestTotal = nums[nums.length - 1];
-        break;
-      }
-      if (i + 1 < lines.length) {
-        const nextNums = extractNumbersFromLine(lines[i + 1], isZeroDecimal);
-        if (nextNums.length > 0) {
-          bestTotal = nextNums[nextNums.length - 1];
-          break;
+  // Extract Total Amount: Tier 1 explicit payable totals first, then Tier 2 fallback
+  const findTotalByRegex = (regex: RegExp): number | null => {
+    for (let i = lines.length - 1; i >= 0; i--) {
+      const line = lines[i];
+      const folded = foldAccents(line);
+      if (SUBTOTAL_EXCLUDE_REGEX.test(folded)) continue;
+      if (regex.test(folded)) {
+        const nums = extractNumbersFromLine(line, isZeroDecimal);
+        if (nums.length > 0) {
+          return nums[nums.length - 1];
+        }
+        if (i + 1 < lines.length) {
+          const nextFolded = foldAccents(lines[i + 1]);
+          if (!SUBTOTAL_EXCLUDE_REGEX.test(nextFolded)) {
+            const nextNums = extractNumbersFromLine(lines[i + 1], isZeroDecimal);
+            if (nextNums.length > 0) {
+              return nextNums[nextNums.length - 1];
+            }
+          }
         }
       }
     }
-  }
+    return null;
+  };
+
+  let bestTotal: number | null =
+    findTotalByRegex(PRIMARY_TOTAL_LINE_REGEX) ?? findTotalByRegex(TOTAL_LINE_REGEX);
 
   if (bestTotal === null) {
     const allNums = lines
@@ -573,26 +647,56 @@ export function parseReceiptText(
     }
   }
 
-  // Extract VAT / Tax amount (handles both inline "PVM 21% 1,61" / "부가세 1,136" and tabular Rimi VAT)
+  // Extract VAT / Tax amount:
+  // 1) First check tabular Lithuanian/EU VAT breakdown rows ("A= 21,00%  8,81  1,85  10,66")
   let bestTax: number | null = null;
-  for (let i = lines.length - 1; i >= 0; i--) {
-    const line = lines[i];
-    const folded = foldAccents(line);
-    if (TAX_LINE_REGEX.test(folded)) {
-      const nums = extractNumbersFromLine(line, isZeroDecimal).filter(
-        (n) => bestTotal === null || n <= bestTotal
-      );
-      if (nums.length > 0) {
-        bestTax = nums[nums.length - 1];
-        break;
+  let vatTableSum = 0;
+  let vatTableHits = 0;
+  for (const line of lines) {
+    if (!VAT_TABLE_ROW_REGEX.test(line)) continue;
+    const withoutPct = line.replace(/\d{1,2}[.,]\d{1,2}\s*%/g, ' ');
+    const nums = extractNumbersFromLine(withoutPct, isZeroDecimal);
+    if (nums.length >= 3) {
+      const net = nums[nums.length - 3];
+      const vat = nums[nums.length - 2];
+      const gross = nums[nums.length - 1];
+      if (
+        vat < net &&
+        Math.abs(net + vat - gross) <= 0.05 &&
+        (bestTotal === null || vat <= bestTotal)
+      ) {
+        vatTableSum += vat;
+        vatTableHits += 1;
       }
-      if (i + 1 < lines.length) {
-        const nextNums = extractNumbersFromLine(lines[i + 1], isZeroDecimal).filter(
+    }
+  }
+  if (vatTableHits > 0) {
+    bestTax = Math.round(vatTableSum * 100) / 100;
+  }
+
+  // 2) Fallback: inline VAT / PVM / Tax / 부가세 lines
+  if (bestTax === null) {
+    for (let i = lines.length - 1; i >= 0; i--) {
+      const line = lines[i];
+      const folded = foldAccents(line);
+      if (TAX_LINE_REGEX.test(folded)) {
+        const withoutPct = line.replace(/\d{1,2}[.,]\d{1,2}\s*%/g, ' ');
+        const nums = extractNumbersFromLine(withoutPct, isZeroDecimal).filter(
           (n) => bestTotal === null || n <= bestTotal
         );
-        if (nextNums.length > 0) {
-          bestTax = nextNums[nextNums.length - 1];
+        if (nums.length > 0) {
+          bestTax = nums[nums.length - 1];
           break;
+        }
+        if (i + 1 < lines.length) {
+          const nextWithoutPct = lines[i + 1].replace(/\d{1,2}[.,]\d{1,2}\s*%/g, ' ');
+          const nextNums = extractNumbersFromLine(nextWithoutPct, isZeroDecimal).filter(
+            (n) => bestTotal === null || n <= bestTotal
+          );
+          if (nextNums.length > 0) {
+            bestTax = nextNums[nextNums.length - 1];
+            break;
+          }
         }
       }
     }

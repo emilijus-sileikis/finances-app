@@ -19,7 +19,7 @@ import {
 } from '@/components/ReceiptItemsEditor';
 import { formatEditableAmount } from '@/constants/currencies';
 import { useFinances, useThemeColors } from '@/db/FinanceContext';
-import { isPdfUri, openPdfReceipt } from '@/services/receiptStorage';
+import { decodeReceiptUris, isPdfUri, openPdfReceipt } from '@/services/receiptStorage';
 import type { ThemeColors } from '@/theme/colors';
 import type { CategoryId, Expense, UpdateExpenseInput } from '@/types/finance';
 import { isValidIsoDate, parseFlexibleAmount } from '@/utils/format';
@@ -89,8 +89,12 @@ function ExpenseDetailForm({
     toEditableItems(expense.items, currency)
   );
   const [showFullReceipt, setShowFullReceipt] = useState(false);
+  const [receiptPageIdx, setReceiptPageIdx] = useState(0);
 
+  const receiptUris = decodeReceiptUris(expense.receiptUri);
   const hasPdf = isPdfUri(expense.receiptUri);
+  const activeReceiptUri =
+    receiptUris[Math.min(receiptPageIdx, Math.max(0, receiptUris.length - 1))] ?? null;
   const currentTotal = parseFlexibleAmount(amountText);
 
   const handleSave = async () => {
@@ -142,10 +146,10 @@ function ExpenseDetailForm({
         contentContainerStyle={styles.body}
         keyboardShouldPersistTaps="handled"
       >
-        {expense.receiptUri &&
+        {activeReceiptUri &&
           (hasPdf ? (
             <Pressable
-              onPress={() => openPdfReceipt(expense.receiptUri!)}
+              onPress={() => openPdfReceipt(activeReceiptUri)}
               style={styles.pdfBox}
             >
               <View style={styles.pdfIconWrap}>
@@ -154,7 +158,7 @@ function ExpenseDetailForm({
               <View style={{ flex: 1 }}>
                 <Text style={styles.pdfTitle}>{t.pdfSavedLocal}</Text>
                 <Text style={styles.pdfSub} numberOfLines={1}>
-                  {expense.receiptUri.split('/').pop()}
+                  {activeReceiptUri.split('/').pop()}
                 </Text>
               </View>
               <View style={styles.openPdfPill}>
@@ -162,16 +166,51 @@ function ExpenseDetailForm({
               </View>
             </Pressable>
           ) : (
-            <Pressable onPress={() => setShowFullReceipt((v) => !v)} style={styles.receiptBox}>
-              <Image
-                source={{ uri: expense.receiptUri }}
-                style={showFullReceipt ? styles.receiptFull : styles.receiptThumb}
-                resizeMode="contain"
-              />
-              <Text style={styles.receiptHint}>
-                {showFullReceipt ? t.tapToShrink : t.tapToExpand}
-              </Text>
-            </Pressable>
+            <View style={styles.receiptBox}>
+              <Pressable
+                onPress={() => setShowFullReceipt((v) => !v)}
+                style={{ width: '100%', alignItems: 'center' }}
+              >
+                <Image
+                  source={{ uri: activeReceiptUri }}
+                  style={showFullReceipt ? styles.receiptFull : styles.receiptThumb}
+                  resizeMode="contain"
+                />
+                <Text style={styles.receiptHint}>
+                  {showFullReceipt ? t.tapToShrink : t.tapToExpand}
+                </Text>
+              </Pressable>
+              {receiptUris.length > 1 && (
+                <ScrollView
+                  horizontal
+                  showsHorizontalScrollIndicator={false}
+                  contentContainerStyle={styles.pageSwitchRow}
+                >
+                  {receiptUris.map((u, idx) => {
+                    const active = idx === receiptPageIdx;
+                    return (
+                      <Pressable
+                        key={u}
+                        onPress={() => setReceiptPageIdx(idx)}
+                        style={[
+                          styles.pageSwitchChip,
+                          active && styles.pageSwitchChipActive,
+                        ]}
+                      >
+                        <Text
+                          style={[
+                            styles.pageSwitchText,
+                            active && { color: Colors.primary, fontWeight: '800' },
+                          ]}
+                        >
+                          {t.pageLabel(idx + 1)}
+                        </Text>
+                      </Pressable>
+                    );
+                  })}
+                </ScrollView>
+              )}
+            </View>
           ))}
 
         <View style={styles.row}>
@@ -393,6 +432,28 @@ const createStyles = (Colors: ThemeColors) => StyleSheet.create({
     color: Colors.textMuted,
     fontSize: 12,
     marginTop: 6,
+  },
+  pageSwitchRow: {
+    flexDirection: 'row',
+    gap: 8,
+    paddingTop: 8,
+  },
+  pageSwitchChip: {
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 8,
+    backgroundColor: Colors.surface,
+    borderWidth: 1,
+    borderColor: Colors.border,
+  },
+  pageSwitchChipActive: {
+    borderColor: Colors.primary,
+    backgroundColor: Colors.primarySoft,
+  },
+  pageSwitchText: {
+    color: Colors.textSecondary,
+    fontSize: 11,
+    fontWeight: '700',
   },
   row: {
     flexDirection: 'row',

@@ -47,6 +47,7 @@ import { parseReceiptText, suggestCategory } from '@/services/receiptParser';
 import { splitReceiptAmounts } from '@/services/receiptSplit';
 import {
   deleteReceiptFile,
+  encodeReceiptUris,
   isPdfUri,
   openPdfReceipt,
   pickAndSavePdfReceipt,
@@ -55,6 +56,7 @@ import {
   saveReceiptFromBase64,
   saveReceiptFromUri,
 } from '@/services/receiptStorage';
+import { stitchReceiptPages } from '@/services/receiptStitcher';
 import type { ThemeColors } from '@/theme/colors';
 import type { CategoryId, QuickPreset } from '@/types/finance';
 import { getTodayIso, isValidIsoDate, parseFlexibleAmount } from '@/utils/format';
@@ -64,6 +66,11 @@ interface SplitSnapshot {
   taxText: string;
   draftItems: EditableReceiptItem[];
   divisor: number;
+}
+
+interface AttachedReceiptPage {
+  uri: string;
+  rotationDeg: OcrRotation;
 }
 
 export default function ScanScreen() {
@@ -93,13 +100,14 @@ export default function ScanScreen() {
   // Scan quality & foreign trip currency state
   const [cropBeforeScan, setCropBeforeScan] = useState(true);
   const [highContrastOcr, setHighContrastOcr] = useState(true);
-  const [imageRotation, setImageRotation] = useState<OcrRotation>(0);
   const [receiptCurrency, setReceiptCurrency] = useState<CurrencyCode | null>(null);
   const [showFxEditModal, setShowFxEditModal] = useState(false);
   const [fxRateInput, setFxRateInput] = useState('');
 
-  // Receipt file & OCR/PDF worker state
-  const [receiptUri, setReceiptUri] = useState<string | null>(null);
+  // Receipt files (multi-page images OR single PDF) & OCR/PDF worker state
+  const [receiptPages, setReceiptPages] = useState<AttachedReceiptPage[]>([]);
+  const [activePageIdx, setActivePageIdx] = useState(0);
+  const [pdfUri, setPdfUri] = useState<string | null>(null);
   const [pdfFileName, setPdfFileName] = useState<string | null>(null);
   const [ocrJob, setOcrJob] = useState<OcrJobPayload | null>(null);
   const [ocrScanning, setOcrScanning] = useState(false);
@@ -184,33 +192,47 @@ export default function ScanScreen() {
     [merchantRules, resolveCategoryLabel, t, currency, receiptCurrency]
   );
 
-  const startOcrForSavedImage = useCallback(
+  const startOcrForPages = useCallback(
     async (
-      savedUri: string,
+      pages: AttachedReceiptPage[],
       opts?: {
         customNotice?: string;
-        rotationDeg?: OcrRotation;
         highContrast?: boolean;
+        selectIndex?: number;
       }
     ) => {
-      const rot = opts?.rotationDeg ?? 0;
       const useContrast = opts?.highContrast ?? highContrastOcr;
-      setReceiptUri(savedUri);
+      setReceiptPages(pages);
+      setActivePageIdx(
+        opts?.selectIndex !== undefined
+          ? Math.max(0, Math.min(opts.selectIndex, pages.length - 1))
+          : Math.max(0, pages.length - 1)
+      );
+      setPdfUri(null);
       setPdfFileName(null);
-      setImageRotation(rot);
       setSplitSnapshot(null);
       setOcrNotice(opts?.customNotice ?? null);
+
+      if (pages.length === 0) {
+        setOcrScanning(false);
+        return;
+      }
+
       setOcrScanning(true);
       setOcrStatus(t.preparingImage);
       setOcrProgress(0.08);
       try {
-        const dataUrl = await readReceiptAsDataUrl(savedUri);
+        const pagePayloads = await Promise.all(
+          pages.map(async (p) => ({
+            data: await readReceiptAsDataUrl(p.uri),
+            rotationDeg: p.rotationDeg,
+          }))
+        );
         setOcrJob((prev) => ({
           id: (prev?.id ?? 0) + 1,
           kind: 'image',
-          data: dataUrl,
+          pages: pagePayloads,
           ocrLang,
-          rotationDeg: rot,
           highContrast: useContrast,
         }));
       } catch {
@@ -223,9 +245,10 @@ export default function ScanScreen() {
 
   const startPdfJob = useCallback(
     (savedUri: string, base64: string, fileName: string, customNotice?: string) => {
-      setReceiptUri(savedUri);
+      setReceiptPages([]);
+      setActivePageIdx(0);
+      setPdfUri(savedUri);
       setPdfFileName(fileName);
-      setImageRotation(0);
       setSplitSnapshot(null);
       setOcrNotice(customNotice ?? null);
       setOcrScanning(true);
@@ -249,24 +272,34 @@ export default function ScanScreen() {
     let cancelled = false;
     (async () => {
       try {
-        const sharedFile = shareIntent.files?.[0];
-        if (sharedFile?.path) {
-          const mime = (sharedFile.mimeType ?? '').toLowerCase();
-          const fileName = sharedFile.fileName || 'shared_receipt';
-          const isPdf = mime.includes('pdf') || fileName.toLowerCase().endsWith('.pdf');
+        const files = shareIntent.files ?? [];
+        const firstFile = files[0];
+        if (firstFile?.path) {
+          const firstMime = (firstFile.mimeType ?? '').toLowerCase();
+          const firstName = firstFile.fileName || 'shared_receipt';
+          const firstIsPdf =
+            firstMime.includes('pdf') || firstName.toLowerCase().endsWith('.pdf');
 
-          if (isPdf) {
-            const savedUri = await saveReceiptFromUri(sharedFile.path, 'pdf');
+          if (firstIsPdf) {
+            const savedUri = await saveReceiptFromUri(firstFile.path, 'pdf');
             const base64 = await readFileAsBase64(savedUri);
             if (!cancelled) {
-              startPdfJob(savedUri, base64, fileName, t.sharedFileNotice);
+              startPdfJob(savedUri, base64, firstName, t.sharedFileNotice);
             }
           } else {
-            const ext = mime.includes('png') ? 'png' : mime.includes('webp') ? 'webp' : 'jpg';
-            const savedUri = await saveReceiptFromUri(sharedFile.path, ext);
-            if (!cancelled) {
-              await startOcrForSavedImage(savedUri, {
+            const savedPages: AttachedReceiptPage[] = [];
+            for (const f of files.slice(0, 6)) {
+              if (!f?.path) continue;
+              const mime = (f.mimeType ?? '').toLowerCase();
+              if (mime.includes('pdf')) continue;
+              const ext = mime.includes('png') ? 'png' : mime.includes('webp') ? 'webp' : 'jpg';
+              const savedUri = await saveReceiptFromUri(f.path, ext);
+              savedPages.push({ uri: savedUri, rotationDeg: 0 });
+            }
+            if (!cancelled && savedPages.length > 0) {
+              await startOcrForPages(savedPages, {
                 customNotice: t.sharedFileNotice,
+                selectIndex: 0,
               });
             }
           }
@@ -294,12 +327,12 @@ export default function ScanScreen() {
     shareIntent,
     resetShareIntent,
     startPdfJob,
-    startOcrForSavedImage,
+    startOcrForPages,
     applyParsedText,
     t,
   ]);
 
-  const handleTakePhoto = async () => {
+  const handleTakePhoto = async (appendPage = false) => {
     const perm = await ImagePicker.requestCameraPermissionsAsync();
     if (!perm.granted) {
       Alert.alert(t.alertCamTitle, t.alertCamBody);
@@ -314,10 +347,13 @@ export default function ScanScreen() {
 
     if (res.canceled || !res.assets[0]) return;
     const saved = await saveReceiptFromUri(res.assets[0].uri);
-    await startOcrForSavedImage(saved);
+    const nextPages = appendPage
+      ? [...receiptPages, { uri: saved, rotationDeg: 0 as OcrRotation }]
+      : [{ uri: saved, rotationDeg: 0 as OcrRotation }];
+    await startOcrForPages(nextPages);
   };
 
-  const handlePickGallery = async () => {
+  const handlePickGallery = async (appendPage = false) => {
     const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (!perm.granted) {
       Alert.alert(t.alertPhotosTitle, t.alertPhotosBody);
@@ -327,29 +363,58 @@ export default function ScanScreen() {
     const res = await ImagePicker.launchImageLibraryAsync({
       mediaTypes: ['images'],
       allowsEditing: cropBeforeScan,
+      allowsMultipleSelection: !cropBeforeScan,
+      selectionLimit: 6,
       quality: 0.85,
     });
 
-    if (res.canceled || !res.assets[0]) return;
-    const saved = await saveReceiptFromUri(res.assets[0].uri);
-    await startOcrForSavedImage(saved);
+    if (res.canceled || !res.assets || res.assets.length === 0) return;
+    const newlySaved: AttachedReceiptPage[] = [];
+    for (const asset of res.assets.slice(0, 6)) {
+      const saved = await saveReceiptFromUri(asset.uri);
+      newlySaved.push({ uri: saved, rotationDeg: 0 });
+    }
+    const nextPages = appendPage ? [...receiptPages, ...newlySaved] : newlySaved;
+    await startOcrForPages(nextPages, {
+      selectIndex: appendPage ? nextPages.length - 1 : 0,
+    });
   };
 
-  const handleRotateAndRescan = async () => {
-    if (!receiptUri || isPdfUri(receiptUri)) return;
-    const nextRot = ((imageRotation + 90) % 360) as OcrRotation;
-    await startOcrForSavedImage(receiptUri, {
-      rotationDeg: nextRot,
+  const handleRotateActiveAndRescan = async () => {
+    if (receiptPages.length === 0) return;
+    const safeIdx = Math.min(activePageIdx, receiptPages.length - 1);
+    const nextPages = receiptPages.map((pg, idx) =>
+      idx === safeIdx
+        ? { ...pg, rotationDeg: (((pg.rotationDeg + 90) % 360) as OcrRotation) }
+        : pg
+    );
+    await startOcrForPages(nextPages, {
       highContrast: highContrastOcr,
+      selectIndex: safeIdx,
     });
   };
 
   const handleRescanCurrent = async (overrideContrast?: boolean) => {
-    if (!receiptUri || isPdfUri(receiptUri)) return;
+    if (receiptPages.length === 0) return;
     const contrastToUse = overrideContrast ?? highContrastOcr;
-    await startOcrForSavedImage(receiptUri, {
-      rotationDeg: imageRotation,
+    await startOcrForPages(receiptPages, {
       highContrast: contrastToUse,
+      selectIndex: activePageIdx,
+    });
+  };
+
+  const handleRemovePage = async (idxToRemove: number) => {
+    const target = receiptPages[idxToRemove];
+    if (target) deleteReceiptFile(target.uri);
+    const nextPages = receiptPages.filter((_, idx) => idx !== idxToRemove);
+    if (nextPages.length === 0) {
+      setReceiptPages([]);
+      setActivePageIdx(0);
+      return;
+    }
+    await startOcrForPages(nextPages, {
+      highContrast: highContrastOcr,
+      selectIndex: Math.min(idxToRemove, nextPages.length - 1),
     });
   };
 
@@ -371,7 +436,7 @@ export default function ScanScreen() {
         const clipImg = await Clipboard.getImageAsync({ format: 'png' });
         if (clipImg?.data) {
           const saved = await saveReceiptFromBase64(clipImg.data, 'png');
-          await startOcrForSavedImage(saved);
+          await startOcrForPages([{ uri: saved, rotationDeg: 0 }]);
           return;
         }
       }
@@ -498,12 +563,16 @@ export default function ScanScreen() {
   };
 
   const resetForm = (deleteAttachedFile = false) => {
-    if (deleteAttachedFile && receiptUri) {
-      deleteReceiptFile(receiptUri);
+    if (deleteAttachedFile) {
+      if (pdfUri) deleteReceiptFile(pdfUri);
+      for (const p of receiptPages) {
+        deleteReceiptFile(p.uri);
+      }
     }
-    setReceiptUri(null);
+    setReceiptPages([]);
+    setActivePageIdx(0);
+    setPdfUri(null);
     setPdfFileName(null);
-    setImageRotation(0);
     setReceiptCurrency(null);
     setOcrJob(null);
     setOcrScanning(false);
@@ -572,6 +641,10 @@ export default function ScanScreen() {
           }))
         : rawItems;
 
+      const storedReceiptUri = pdfUri
+        ? pdfUri
+        : encodeReceiptUris(receiptPages.map((p) => p.uri));
+
       await addExpense({
         title: cleanTitle,
         merchant: cleanMerchant,
@@ -580,7 +653,7 @@ export default function ScanScreen() {
         category,
         date: cleanDate,
         notes: combinedNotes,
-        receiptUri,
+        receiptUri: storedReceiptUri,
         rawOcrText: rawText.trim() || null,
         items: convertedItems,
       });
@@ -671,14 +744,16 @@ export default function ScanScreen() {
   }, []);
 
   const handleOcrResult = useCallback(
-    (text: string, kind: 'image' | 'pdf') => {
+    (text: string, kind: 'image' | 'pdf', pageTexts?: string[]) => {
       setOcrScanning(false);
       setOcrProgress(1);
-      if (text.trim().length < 4) {
+      const stitched =
+        pageTexts && pageTexts.length > 1 ? stitchReceiptPages(pageTexts) : text;
+      if (stitched.trim().length < 4) {
         setOcrNotice(t.ocrEmptyNotice);
         return;
       }
-      applyParsedText(text);
+      applyParsedText(stitched);
       setOcrNotice(kind === 'pdf' ? t.pdfDoneNotice : t.ocrDoneNotice);
     },
     [applyParsedText, t]
@@ -689,7 +764,12 @@ export default function ScanScreen() {
     setOcrNotice(msg);
   }, []);
 
-  const hasPdf = isPdfUri(receiptUri);
+  const hasPdf = isPdfUri(pdfUri);
+  const hasAttachment = Boolean(pdfUri) || receiptPages.length > 0;
+  const activePage =
+    receiptPages.length > 0
+      ? receiptPages[Math.min(activePageIdx, receiptPages.length - 1)]
+      : null;
   const currentParsedAmount = parseFlexibleAmount(amountText);
 
   return (
@@ -708,7 +788,7 @@ export default function ScanScreen() {
               <Text style={styles.pageTitle}>{t.scanTitle}</Text>
               <Text style={styles.pageSub}>{t.scanSub}</Text>
             </View>
-            {(receiptUri || amountText || merchant) && (
+            {(hasAttachment || amountText || merchant) && (
               <Pressable onPress={() => resetForm(true)} style={styles.clearBtn}>
                 <Text style={styles.clearBtnText}>{t.clear}</Text>
               </Pressable>
@@ -717,7 +797,7 @@ export default function ScanScreen() {
 
           {/* 4 Capture Actions: Camera, Gallery, PDF, Paste */}
           <View style={styles.captureRow}>
-            <Pressable onPress={handleTakePhoto} style={styles.captureCard}>
+            <Pressable onPress={() => void handleTakePhoto(false)} style={styles.captureCard}>
               <View style={[styles.captureIcon, { backgroundColor: Colors.primarySoft }]}>
                 <Ionicons name="camera-outline" size={22} color={Colors.primary} />
               </View>
@@ -727,7 +807,7 @@ export default function ScanScreen() {
               </Text>
             </Pressable>
 
-            <Pressable onPress={handlePickGallery} style={styles.captureCard}>
+            <Pressable onPress={() => void handlePickGallery(false)} style={styles.captureCard}>
               <View style={[styles.captureIcon, { backgroundColor: Colors.accentSoft }]}>
                 <Ionicons name="image-outline" size={22} color={Colors.accent} />
               </View>
@@ -855,29 +935,29 @@ export default function ScanScreen() {
             )}
           </View>
 
-          {/* Receipt Preview (Image or PDF) */}
-          {receiptUri &&
-            (hasPdf ? (
+          {/* Receipt Preview (Multi-Page Images or PDF) */}
+          {hasAttachment &&
+            (hasPdf && pdfUri ? (
               <View style={styles.pdfPreviewCard}>
                 <View style={styles.pdfIconBadge}>
                   <Ionicons name="document-text" size={24} color={Colors.danger} />
                 </View>
                 <View style={{ flex: 1 }}>
                   <Text style={styles.pdfPreviewTitle} numberOfLines={1}>
-                    {pdfFileName || receiptUri.split('/').pop()}
+                    {pdfFileName || pdfUri.split('/').pop()}
                   </Text>
                   <Text style={styles.attachedText}>{t.pdfSavedLocal}</Text>
                 </View>
                 <Pressable
-                  onPress={() => openPdfReceipt(receiptUri)}
+                  onPress={() => openPdfReceipt(pdfUri)}
                   style={styles.openPdfBtn}
                 >
                   <Text style={styles.openPdfBtnText}>{t.openPdf}</Text>
                 </Pressable>
                 <Pressable
                   onPress={() => {
-                    deleteReceiptFile(receiptUri);
-                    setReceiptUri(null);
+                    deleteReceiptFile(pdfUri);
+                    setPdfUri(null);
                     setPdfFileName(null);
                   }}
                   style={styles.removeImgBtn}
@@ -885,15 +965,15 @@ export default function ScanScreen() {
                   <Ionicons name="trash-outline" size={16} color={Colors.danger} />
                 </Pressable>
               </View>
-            ) : (
+            ) : activePage ? (
               <View style={styles.previewCard}>
                 <View style={styles.previewImgWrap}>
                   <Image
-                    source={{ uri: receiptUri }}
+                    source={{ uri: activePage.uri }}
                     style={[
                       styles.previewImg,
-                      imageRotation !== 0 && {
-                        transform: [{ rotate: `${imageRotation}deg` }],
+                      activePage.rotationDeg !== 0 && {
+                        transform: [{ rotate: `${activePage.rotationDeg}deg` }],
                       },
                     ]}
                     resizeMode="contain"
@@ -902,29 +982,94 @@ export default function ScanScreen() {
                 <View style={styles.previewOverlayRow}>
                   <View style={styles.attachedPill}>
                     <Ionicons name="checkmark-circle" size={14} color={Colors.primary} />
-                    <Text style={styles.attachedText}>{t.receiptSavedLocal}</Text>
+                    <Text style={styles.attachedText}>
+                      {receiptPages.length > 1
+                        ? t.receiptPagesCount(receiptPages.length)
+                        : t.receiptSavedLocal}
+                    </Text>
                   </View>
                   <Pressable
                     onPress={() => {
-                      deleteReceiptFile(receiptUri);
-                      setReceiptUri(null);
-                      setImageRotation(0);
+                      for (const p of receiptPages) deleteReceiptFile(p.uri);
+                      setReceiptPages([]);
+                      setActivePageIdx(0);
                     }}
                     style={styles.removeImgBtn}
                   >
                     <Ionicons name="trash-outline" size={15} color={Colors.danger} />
                   </Pressable>
                 </View>
+
+                {/* Page Switcher Strip + Add Another Page for long receipts */}
+                <ScrollView
+                  horizontal
+                  showsHorizontalScrollIndicator={false}
+                  contentContainerStyle={styles.pagesStrip}
+                >
+                  {receiptPages.map((pg, idx) => {
+                    const isSelected = idx === Math.min(activePageIdx, receiptPages.length - 1);
+                    return (
+                      <Pressable
+                        key={pg.uri}
+                        onPress={() => setActivePageIdx(idx)}
+                        style={[
+                          styles.pageThumbPill,
+                          isSelected && styles.pageThumbPillActive,
+                        ]}
+                      >
+                        <Image source={{ uri: pg.uri }} style={styles.pageMiniThumb} />
+                        <Text
+                          style={[
+                            styles.pageThumbText,
+                            isSelected && { color: Colors.primary, fontWeight: '800' },
+                          ]}
+                        >
+                          {t.pageLabel(idx + 1)}
+                        </Text>
+                        <Pressable
+                          onPress={(e) => {
+                            e.stopPropagation();
+                            void handleRemovePage(idx);
+                          }}
+                          hitSlop={6}
+                        >
+                          <Ionicons name="close" size={13} color={Colors.textMuted} />
+                        </Pressable>
+                      </Pressable>
+                    );
+                  })}
+
+                  <Pressable
+                    onPress={() => void handleTakePhoto(true)}
+                    disabled={ocrScanning}
+                    style={styles.addPageBtn}
+                  >
+                    <Ionicons name="camera-outline" size={14} color={Colors.primary} />
+                    <Text style={styles.addPageText}>{t.addPageCamera}</Text>
+                  </Pressable>
+
+                  <Pressable
+                    onPress={() => void handlePickGallery(true)}
+                    disabled={ocrScanning}
+                    style={styles.addPageBtn}
+                  >
+                    <Ionicons name="images-outline" size={14} color={Colors.accent} />
+                    <Text style={[styles.addPageText, { color: Colors.accent }]}>
+                      {t.addPageGallery}
+                    </Text>
+                  </Pressable>
+                </ScrollView>
+
                 <View style={styles.previewToolsRow}>
                   <Pressable
-                    onPress={() => void handleRotateAndRescan()}
+                    onPress={() => void handleRotateActiveAndRescan()}
                     disabled={ocrScanning}
                     style={styles.previewToolBtn}
                   >
                     <Ionicons name="refresh-outline" size={14} color={Colors.accent} />
                     <Text style={styles.previewToolText}>
                       {t.rotateRescanBtn}
-                      {imageRotation > 0 ? ` (${imageRotation}°)` : ''}
+                      {activePage.rotationDeg > 0 ? ` (${activePage.rotationDeg}°)` : ''}
                     </Text>
                   </Pressable>
                   <Pressable
@@ -955,7 +1100,7 @@ export default function ScanScreen() {
                   </Pressable>
                 </View>
               </View>
-            ))}
+            ) : null)}
 
           {ocrScanning && (
             <View style={styles.progressCard}>
@@ -2131,5 +2276,56 @@ const createStyles = (Colors: ThemeColors) => StyleSheet.create({
     color: Colors.textSecondary,
     fontSize: 13,
     fontWeight: '600',
+  },
+  pagesStrip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 9,
+    borderTopWidth: 1,
+    borderTopColor: Colors.border,
+  },
+  pageThumbPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 8,
+    paddingVertical: 5,
+    borderRadius: 10,
+    backgroundColor: Colors.bg,
+    borderWidth: 1,
+    borderColor: Colors.border,
+  },
+  pageThumbPillActive: {
+    borderColor: Colors.primary,
+    backgroundColor: Colors.primarySoft,
+  },
+  pageMiniThumb: {
+    width: 22,
+    height: 22,
+    borderRadius: 5,
+  },
+  pageThumbText: {
+    color: Colors.textSecondary,
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  addPageBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+    borderRadius: 10,
+    backgroundColor: Colors.bg,
+    borderWidth: 1,
+    borderStyle: 'dashed',
+    borderColor: Colors.borderLight,
+  },
+  addPageText: {
+    color: Colors.primary,
+    fontSize: 11,
+    fontWeight: '700',
   },
 });

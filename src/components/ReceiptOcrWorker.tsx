@@ -4,23 +4,30 @@ import { WebView, type WebViewMessageEvent } from 'react-native-webview';
 
 export type OcrRotation = 0 | 90 | 180 | 270;
 
+export interface OcrImagePageInput {
+  data: string;
+  rotationDeg?: OcrRotation;
+}
+
 export interface OcrJobPayload {
   id: number;
   kind: 'image' | 'pdf';
-  /** For image: data URL (data:image/...;base64,...). For pdf: raw base64 string. */
-  data: string;
+  /** For single image: data URL. For pdf: raw base64 string. */
+  data?: string;
+  /** For multi-page image scans: ordered array of page data URLs + rotations. */
+  pages?: OcrImagePageInput[];
   /** Tesseract OCR language pack, e.g. 'lit+eng' or 'kor+eng' */
   ocrLang?: string;
-  /** Clockwise rotation applied before OCR */
+  /** Clockwise rotation applied before OCR (single-image shortcut) */
   rotationDeg?: OcrRotation;
-  /** Adaptive high-contrast enhancement for paper/thermal receipts */
+  /** Local adaptive paper illumination normalization for thermal/paper receipts */
   highContrast?: boolean;
 }
 
 interface ReceiptOcrWorkerProps {
   job: OcrJobPayload | null;
   onProgress: (status: string, progress: number) => void;
-  onResult: (text: string, kind: 'image' | 'pdf') => void;
+  onResult: (text: string, kind: 'image' | 'pdf', pageTexts?: string[]) => void;
   onError: (message: string) => void;
 }
 
@@ -51,6 +58,68 @@ const OCR_HTML = `<!DOCTYPE html>
     return bytes;
   }
 
+  /**
+   * Local adaptive background normalization using an O(W*H) integral image.
+   * Flattens uneven shadows/creases on paper receipts while keeping even faint
+   * thermal dot-matrix digits crisp black on clean white paper.
+   */
+  function applyLocalAdaptiveContrast(d, w, h) {
+    const count = w * h;
+    const gray = new Uint8Array(count);
+    for (let i = 0, p = 0; i < d.length; i += 4, p++) {
+      gray[p] = Math.round(0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2]);
+    }
+
+    // Integral image (Float64 to avoid 32-bit overflow on large canvases)
+    const stride = w + 1;
+    const integral = new Float64Array((h + 1) * stride);
+    for (let y = 0; y < h; y++) {
+      let rowSum = 0;
+      const rowOff = y * w;
+      const intRow = (y + 1) * stride;
+      const prevRow = y * stride;
+      for (let x = 0; x < w; x++) {
+        rowSum += gray[rowOff + x];
+        integral[intRow + x + 1] = integral[prevRow + x + 1] + rowSum;
+      }
+    }
+
+    const r = Math.max(18, Math.min(48, Math.round(Math.min(w, h) * 0.04)));
+
+    for (let y = 0; y < h; y++) {
+      const y1 = Math.max(0, y - r);
+      const y2 = Math.min(h - 1, y + r);
+      const topOff = y1 * stride;
+      const botOff = (y2 + 1) * stride;
+      const rowOff = y * w;
+
+      for (let x = 0; x < w; x++) {
+        const x1 = Math.max(0, x - r);
+        const x2 = Math.min(w - 1, x + r);
+        const area = (x2 - x1 + 1) * (y2 - y1 + 1);
+        const sum =
+          integral[botOff + x2 + 1] -
+          integral[topOff + x2 + 1] -
+          integral[botOff + x1] +
+          integral[topOff + x1];
+        const localBg = Math.max(30, sum / area);
+
+        const g = gray[rowOff + x];
+        // Ratio < 1 means darker than local paper; ratio >= 0.96 is paper background
+        const ratio = g / localBg;
+        let out;
+        if (ratio >= 0.96) {
+          out = 255;
+        } else {
+          // Gentle strong ink pull without bleaching light thermal text
+          out = Math.max(0, Math.min(255, Math.round(255 - (0.96 - ratio) * 760)));
+        }
+        const idx = (rowOff + x) * 4;
+        d[idx] = d[idx + 1] = d[idx + 2] = out;
+      }
+    }
+  }
+
   function preprocessImage(dataUrl, rotationDeg, highContrast) {
     return new Promise((resolve) => {
       const img = new Image();
@@ -61,7 +130,7 @@ const OCR_HTML = `<!DOCTYPE html>
           const rawW = swapped ? img.height : img.width;
           const rawH = swapped ? img.width : img.height;
 
-          const maxDim = highContrast ? 1800 : 1400;
+          const maxDim = highContrast ? 1800 : 1500;
           let scale = 1;
           if (Math.max(rawW, rawH) > maxDim) {
             scale = maxDim / Math.max(rawW, rawH);
@@ -89,50 +158,11 @@ const OCR_HTML = `<!DOCTYPE html>
 
           const imgData = ctx.getImageData(0, 0, outW, outH);
           const d = imgData.data;
-          const pixelCount = outW * outH;
 
           if (highContrast) {
-            // 1. Grayscale + histogram for adaptive white/black level stretching
-            const hist = new Uint32Array(256);
-            const grays = new Uint8Array(pixelCount);
-            for (let i = 0, p = 0; i < d.length; i += 4, p++) {
-              const lum = Math.round(0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2]);
-              grays[p] = lum;
-              hist[lum]++;
-            }
-
-            let acc = 0;
-            let pLow = 0;
-            let pHigh = 255;
-            const lowTarget = pixelCount * 0.02;
-            const highTarget = pixelCount * 0.90;
-            for (let v = 0; v < 256; v++) {
-              acc += hist[v];
-              if (acc >= lowTarget) { pLow = v; break; }
-            }
-            acc = 0;
-            for (let v = 0; v < 256; v++) {
-              acc += hist[v];
-              if (acc >= highTarget) { pHigh = v; break; }
-            }
-            const span = Math.max(24, pHigh - pLow);
-
-            // 2. Stretch & push ink darker while whitening dim/crumpled paper
-            for (let i = 0, p = 0; i < d.length; i += 4, p++) {
-              let norm = ((grays[p] - pLow) * 255) / span;
-              if (norm < 0) norm = 0;
-              if (norm > 255) norm = 255;
-              let out;
-              if (norm < 155) {
-                out = norm * 0.72;
-              } else {
-                out = 215 + ((norm - 155) * 40) / 100;
-              }
-              out = Math.max(0, Math.min(255, Math.round(out)));
-              d[i] = d[i + 1] = d[i + 2] = out;
-            }
+            applyLocalAdaptiveContrast(d, outW, outH);
           } else {
-            const contrast = 1.2;
+            const contrast = 1.15;
             for (let i = 0; i < d.length; i += 4) {
               let lum = 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2];
               lum = Math.max(0, Math.min(255, (lum - 128) * contrast + 128));
@@ -141,7 +171,7 @@ const OCR_HTML = `<!DOCTYPE html>
           }
 
           ctx.putImageData(imgData, 0, 0);
-          resolve(canvas.toDataURL('image/jpeg', 0.9));
+          resolve(canvas.toDataURL('image/png'));
         } catch (e) {
           resolve(dataUrl);
         }
@@ -151,31 +181,39 @@ const OCR_HTML = `<!DOCTYPE html>
     });
   }
 
-  async function runImageOcr(jobId, dataUrl, kind, ocrLang, rotationDeg, highContrast) {
-    if (typeof Tesseract === 'undefined') {
-      post({ type: 'error', jobId, message: 'OCR engine unavailable offline. File is attached — enter details manually or paste text.' });
-      return;
-    }
+  async function ocrSingleImage(jobId, dataUrl, ocrLang, rotationDeg, highContrast, pageIndex, totalPages) {
+    const pagePrefix = totalPages > 1 ? 'Page ' + (pageIndex + 1) + '/' + totalPages + ': ' : '';
+    const basePct = pageIndex / totalPages;
+    const spanPct = 1 / totalPages;
+
     post({
       type: 'progress',
       jobId,
-      status: highContrast ? 'Boosting receipt contrast...' : 'Enhancing receipt image...',
-      progress: 0.15,
+      status: pagePrefix + (highContrast ? 'Enhancing paper contrast...' : 'Preparing receipt image...'),
+      progress: Math.min(0.95, 0.1 + basePct * 0.85 + spanPct * 0.12),
     });
+
     const cleanedUrl = await preprocessImage(dataUrl, rotationDeg || 0, Boolean(highContrast));
 
-    post({ type: 'progress', jobId, status: 'Reading text on-device...', progress: 0.3 });
     const ocrLogger = (m) => {
       if (m && typeof m.progress === 'number') {
-        const pct = Math.min(0.98, 0.3 + m.progress * 0.68);
+        const pct = Math.min(
+          0.98,
+          0.12 + basePct * 0.86 + (0.15 + m.progress * 0.85) * spanPct * 0.86
+        );
         post({
           type: 'progress',
           jobId,
-          status: m.status === 'recognizing text' ? 'Extracting receipt lines...' : 'Loading on-device OCR...',
+          status:
+            pagePrefix +
+            (m.status === 'recognizing text'
+              ? 'Extracting receipt lines...'
+              : 'Loading on-device OCR...'),
           progress: pct,
         });
       }
     };
+
     const langPack = ocrLang || 'lit+eng';
     let result;
     try {
@@ -183,11 +221,41 @@ const OCR_HTML = `<!DOCTYPE html>
     } catch {
       result = await Tesseract.recognize(cleanedUrl, 'eng', { logger: ocrLogger });
     }
+    return (result && result.data && result.data.text) ? result.data.text : '';
+  }
+
+  async function runImagePagesOcr(jobId, pages, kind, ocrLang, highContrast) {
+    if (typeof Tesseract === 'undefined') {
+      post({
+        type: 'error',
+        jobId,
+        message: 'OCR engine unavailable offline. File is attached — enter details manually or paste text.',
+      });
+      return;
+    }
+
+    const totalPages = pages.length;
+    const pageTexts = [];
+    for (let i = 0; i < totalPages; i++) {
+      const pg = pages[i];
+      const txt = await ocrSingleImage(
+        jobId,
+        pg.data,
+        ocrLang,
+        pg.rotationDeg || 0,
+        highContrast,
+        i,
+        totalPages
+      );
+      pageTexts.push(txt);
+    }
+
     post({
       type: 'result',
       jobId,
       kind,
-      text: (result && result.data && result.data.text) ? result.data.text : '',
+      text: pageTexts.join('\\n'),
+      pageTexts,
     });
   }
 
@@ -256,8 +324,8 @@ const OCR_HTML = `<!DOCTYPE html>
       canvas.height = viewport.height;
       const ctx = canvas.getContext('2d');
       await firstPage.render({ canvasContext: ctx, viewport }).promise;
-      const imgDataUrl = canvas.toDataURL('image/jpeg', 0.9);
-      await runImageOcr(jobId, imgDataUrl, 'pdf', ocrLang, 0, highContrast);
+      const imgDataUrl = canvas.toDataURL('image/png');
+      await runImagePagesOcr(jobId, [{ data: imgDataUrl, rotationDeg: 0 }], 'pdf', ocrLang, highContrast);
     } catch (err) {
       post({
         type: 'error',
@@ -267,12 +335,12 @@ const OCR_HTML = `<!DOCTYPE html>
     }
   }
 
-  window.startReceiptJob = async function(jobId, kind, data, ocrLang, rotationDeg, highContrast) {
+  window.startReceiptJob = async function(jobId, kind, payloadData, ocrLang, highContrast) {
     try {
       if (kind === 'pdf') {
-        await runPdfParse(jobId, data, ocrLang, highContrast);
+        await runPdfParse(jobId, payloadData, ocrLang, highContrast);
       } else {
-        await runImageOcr(jobId, data, 'image', ocrLang, rotationDeg, highContrast);
+        await runImagePagesOcr(jobId, payloadData, 'image', ocrLang, highContrast);
       }
     } catch (err) {
       post({ type: 'error', jobId, message: (err && err.message) ? err.message : 'Scan failed.' });
@@ -302,18 +370,31 @@ export function ReceiptOcrWorker({
       if (!Number.isInteger(payload.id) || (payload.kind !== 'image' && payload.kind !== 'pdf')) {
         return;
       }
+
+      const pages: OcrImagePageInput[] =
+        payload.kind === 'image'
+          ? payload.pages && payload.pages.length > 0
+            ? payload.pages
+            : payload.data
+              ? [{ data: payload.data, rotationDeg: payload.rotationDeg ?? 0 }]
+              : []
+          : [];
+
+      if (payload.kind === 'image' && pages.length === 0) return;
+      if (payload.kind === 'pdf' && !payload.data) return;
+
+      const timeoutMs = Math.min(120_000, Math.max(45_000, pages.length * 35_000));
       if (timeoutRef.current) clearTimeout(timeoutRef.current);
       timeoutRef.current = setTimeout(() => {
         onError('Scan timed out — file is attached, you can fill or paste the total below.');
-      }, 40000);
+      }, timeoutMs);
 
       const safeKind = JSON.stringify(payload.kind);
-      const safeData = JSON.stringify(payload.data);
+      const safePayload = JSON.stringify(payload.kind === 'pdf' ? payload.data : pages);
       const safeLang = JSON.stringify(payload.ocrLang ?? 'lit+eng');
-      const safeRot = Number(payload.rotationDeg ?? 0);
       const safeContrast = Boolean(payload.highContrast ?? true);
       webViewRef.current?.injectJavaScript(`
-        window.startReceiptJob(${payload.id}, ${safeKind}, ${safeData}, ${safeLang}, ${safeRot}, ${safeContrast});
+        window.startReceiptJob(${payload.id}, ${safeKind}, ${safePayload}, ${safeLang}, ${safeContrast});
         true;
       `);
     },
@@ -343,6 +424,7 @@ export function ReceiptOcrWorker({
         status?: string;
         progress?: number;
         text?: string;
+        pageTexts?: string[];
         message?: string;
       };
 
@@ -362,7 +444,7 @@ export function ReceiptOcrWorker({
         onProgress(msg.status ?? 'Scanning...', msg.progress ?? 0.3);
       } else if (msg.type === 'result') {
         if (timeoutRef.current) clearTimeout(timeoutRef.current);
-        onResult(msg.text ?? '', msg.kind ?? job.kind);
+        onResult(msg.text ?? '', msg.kind ?? job.kind, msg.pageTexts);
       } else if (msg.type === 'error') {
         if (timeoutRef.current) clearTimeout(timeoutRef.current);
         onError(msg.message ?? 'Could not scan receipt.');

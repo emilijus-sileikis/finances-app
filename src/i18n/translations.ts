@@ -448,6 +448,12 @@ const EN = {
   themeDark: 'Dark',
   themeLight: 'Light',
   themeSystem: 'System',
+
+  // Multi-page receipt scanning (v1.7)
+  receiptPagesCount: (n: number) => `${n} receipt pages attached`,
+  pageLabel: (n: number) => `Page ${n}`,
+  addPageCamera: '+ Camera Page',
+  addPageGallery: '+ Gallery Page',
 };
 
 export type TranslationSet = typeof EN;
@@ -854,6 +860,12 @@ const LT: TranslationSet = {
   themeDark: 'Tamsi',
   themeLight: 'Šviesi',
   themeSystem: 'Sistemos',
+
+  // Multi-page receipt scanning (v1.7)
+  receiptPagesCount: (n: number) => `Pridėta čekio puslapių: ${n}`,
+  pageLabel: (n: number) => `${n} psl.`,
+  addPageCamera: '+ Kamera',
+  addPageGallery: '+ Galerija',
 };
 
 export const TRANSLATIONS: Record<Language, TranslationSet> = {

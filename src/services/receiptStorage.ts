@@ -19,9 +19,34 @@ function getReceiptsDir(): Directory {
   return dir;
 }
 
+export function decodeReceiptUris(raw: string | null | undefined): string[] {
+  if (!raw) return [];
+  const trimmed = raw.trim();
+  if (!trimmed) return [];
+  if (trimmed.startsWith('[')) {
+    try {
+      const parsed: unknown = JSON.parse(trimmed);
+      if (Array.isArray(parsed)) {
+        return parsed.filter((u): u is string => typeof u === 'string' && u.length > 0);
+      }
+    } catch {
+      // Fallback to treating raw string as a single URI
+    }
+  }
+  return [trimmed];
+}
+
+export function encodeReceiptUris(uris: string[]): string | null {
+  const clean = uris.map((u) => u.trim()).filter((u) => u.length > 0);
+  if (clean.length === 0) return null;
+  if (clean.length === 1) return clean[0];
+  return JSON.stringify(clean);
+}
+
 export function isPdfUri(uri: string | null | undefined): boolean {
-  if (!uri) return false;
-  return uri.toLowerCase().split('?')[0].endsWith('.pdf');
+  const list = decodeReceiptUris(uri);
+  if (list.length === 0) return false;
+  return list[0].toLowerCase().split('?')[0].endsWith('.pdf');
 }
 
 export async function saveReceiptFromUri(sourceUri: string, forcedExt?: string): Promise<string> {
@@ -120,16 +145,18 @@ export async function readReceiptAsDataUrl(uri: string): Promise<string> {
 }
 
 export function deleteReceiptFile(uri: string | null): void {
-  if (!uri) return;
-  try {
-    // Only delete files stored inside this app's own document directory
-    if (!uri.startsWith(Paths.document.uri)) return;
-    const file = new File(uri);
-    if (file.exists) {
-      file.delete();
+  const uris = decodeReceiptUris(uri);
+  for (const singleUri of uris) {
+    try {
+      // Only delete files stored inside this app's own document directory
+      if (!singleUri.startsWith(Paths.document.uri)) continue;
+      const file = new File(singleUri);
+      if (file.exists) {
+        file.delete();
+      }
+    } catch {
+      // Ignore cleanup errors for missing files
     }
-  } catch {
-    // Ignore cleanup errors for missing files
   }
 }
 
